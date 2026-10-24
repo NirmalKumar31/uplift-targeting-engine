@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: dim_client
+    description: Customer 360 - features, bands, uplift scores, segment and campaign action.
+    columns:
+      - name: client_id
+        data_tests: [unique, not_null]
+      - name: action
+        data_tests:
+          - accepted_values: {arguments: {values: ['send', 'holdout', 'skip']}}
+      - name: segment
+        data_tests:
+          - accepted_values: {arguments: {values: ['Persuadable', 'Sure thing', 'Lost cause', 'Do not disturb']}}
+      - name: uplift_decile
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 1, high: 10}}
+  - name: mart_segment_summary
+  - name: mart_decile_summary
+    columns:
+      - name: uplift_decile
+        data_tests: [unique]
+  - name: mart_experiment_cate
+  - name: mart_model_leaderboard
+    columns:
+      - name: model
+        data_tests: [unique]
+  - name: mart_test_scorecard
+  - name: mart_qini_curves
+  - name: mart_uplift_calibration
+  - name: mart_profit_curve
+  - name: mart_campaign_policy
+  - name: mart_policy_sensitivity
+  - name: mart_feature_importance
+  - name: mart_feature_dependence
+  - name: mart_drift
+  - name: mart_experiment_balance
+  - name: mart_pipeline_runs

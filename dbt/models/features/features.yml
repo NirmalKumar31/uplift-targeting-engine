@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: client_features
+    description: Leakage-free client feature store, measured as of `reference_date` (before the SMS).
+    columns:
+      - name: client_id
+        data_tests: [unique, not_null]
+      - name: n_txn
+        data_tests: [not_null]
+      - name: share_own_brand
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 1}}
+  - name: feat_rfm
+    columns:
+      - name: client_id
+        data_tests: [unique]
+      - name: recency_days
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 200}}

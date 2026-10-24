@@ -1,0 +1,230 @@
+"""Uplift meta-learners on a shared LightGBM base.
+
+Every learner estimates tau(x) = P(buy | x, SMS) - P(buy | x, no SMS) and exposes
+`fit(X, t, y)` / `predict(X)`. The experiment is randomised, so the propensity is the constant
+treated share; it is still estimated from the data rather than hard-coded to 0.5.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar
+
+import lightgbm as lgb
+import numpy as np
+import pandas as pd
+from sklearn.isotonic import IsotonicRegression
+from sklearn.model_selection import StratifiedKFold
+
+
+def _clf(params: dict[str, Any], seed: int) -> lgb.LGBMClassifier:
+    return lgb.LGBMClassifier(**params, random_state=seed)
+
+
+def _reg(params: dict[str, Any], seed: int) -> lgb.LGBMRegressor:
+    return lgb.LGBMRegressor(**params, random_state=seed)
+
+
+def _proba(model: lgb.LGBMClassifier, X: pd.DataFrame) -> np.ndarray:
+    return model.predict_proba(X)[:, 1]
+
+
+class UpliftLearner(ABC):
+    name: ClassVar[str]
+    #: True for baselines that are not uplift estimates (excluded from ensembles).
+    is_baseline: ClassVar[bool] = False
+
+    def __init__(self, params: dict[str, Any] | None = None, seed: int = 42):
+        self.params = dict(params or {})
+        self.seed = seed
+
+    @abstractmethod
+    def fit(self, X: pd.DataFrame, t: np.ndarray, y: np.ndarray) -> UpliftLearner: ...
+
+    @abstractmethod
+    def predict(self, X: pd.DataFrame) -> np.ndarray: ...
+
+
+class RandomLearner(UpliftLearner):
+    """Sanity floor: a random ranking."""
+
+    name = "random"
+    is_baseline = True
+
+    def fit(self, X, t, y):
+        return self
+
+    def predict(self, X):
+        return np.random.default_rng(self.seed).random(len(X))
+
+
+class ResponseLearner(UpliftLearner):
+    """The traditional approach: rank by P(buy | SMS). Targets likely buyers, not persuadables."""
+
+    name = "response"
+    is_baseline = True
+
+    def fit(self, X, t, y):
+        t = np.asarray(t)
+        self.model_ = _clf(self.params, self.seed).fit(X[t == 1], np.asarray(y)[t == 1])
+        return self
+
+    def predict(self, X):
+        return _proba(self.model_, X)
+
+
+class SLearner(UpliftLearner):
+    """One model with treatment as a feature; uplift = f(x, 1) - f(x, 0)."""
+
+    name = "s_learner"
+
+    def fit(self, X, t, y):
+        self.model_ = _clf(self.params, self.seed).fit(X.assign(_t=np.asarray(t)), y)
+        return self
+
+    def predict(self, X):
+        return _proba(self.model_, X.assign(_t=1)) - _proba(self.model_, X.assign(_t=0))
+
+
+class TLearner(UpliftLearner):
+    """Separate response models per arm; uplift = mu1(x) - mu0(x)."""
+
+    name = "t_learner"
+
+    def fit(self, X, t, y):
+        t, y = np.asarray(t), np.asarray(y)
+        self.mu1_ = _clf(self.params, self.seed).fit(X[t == 1], y[t == 1])
+        self.mu0_ = _clf(self.params, self.seed).fit(X[t == 0], y[t == 0])
+        return self
+
+    def predict(self, X):
+        return _proba(self.mu1_, X) - _proba(self.mu0_, X)
+
+    def predict_arms(self, X) -> tuple[np.ndarray, np.ndarray]:
+        return _proba(self.mu0_, X), _proba(self.mu1_, X)
+
+
+class XLearner(UpliftLearner):
+    """Kunzel et al. (2019): impute individual effects per arm, regress, blend by propensity."""
+
+    name = "x_learner"
+
+    def fit(self, X, t, y):
+        t, y = np.asarray(t), np.asarray(y, dtype=float)
+        base = TLearner(self.params, self.seed).fit(X, t, y)
+        d1 = y[t == 1] - _proba(base.mu0_, X[t == 1])
+        d0 = _proba(base.mu1_, X[t == 0]) - y[t == 0]
+        self.tau1_ = _reg(self.params, self.seed).fit(X[t == 1], d1)
+        self.tau0_ = _reg(self.params, self.seed).fit(X[t == 0], d0)
+        self.e_ = t.mean()
+        return self
+
+    def predict(self, X):
+        return self.e_ * self.tau0_.predict(X) + (1 - self.e_) * self.tau1_.predict(X)
+
+
+class ClassTransformation(UpliftLearner):
+    """Jaskowski & Jaroszewicz (2012): z = 1 if (SMS and bought) or (no SMS and didn't).
+
+    With a 50/50 split, uplift = 2 P(z=1 | x) - 1.
+    """
+
+    name = "class_transformation"
+
+    def fit(self, X, t, y):
+        t, y = np.asarray(t), np.asarray(y)
+        z = (y * t + (1 - y) * (1 - t)).astype(int)
+        self.model_ = _clf(self.params, self.seed).fit(X, z)
+        return self
+
+    def predict(self, X):
+        return 2 * _proba(self.model_, X) - 1
+
+
+class DRLearner(UpliftLearner):
+    """Kennedy (2023) doubly-robust learner with 2-fold cross-fitted outcome models."""
+
+    name = "dr_learner"
+
+    def fit(self, X, t, y):
+        t, y = np.asarray(t), np.asarray(y, dtype=float)
+        e = t.mean()
+        mu0, mu1 = np.zeros(len(y)), np.zeros(len(y))
+        folds = StratifiedKFold(2, shuffle=True, random_state=self.seed)
+        for fit_idx, pred_idx in folds.split(X, t * 2 + y):
+            arms = TLearner(self.params, self.seed).fit(X.iloc[fit_idx], t[fit_idx], y[fit_idx])
+            mu0[pred_idx], mu1[pred_idx] = arms.predict_arms(X.iloc[pred_idx])
+        pseudo = mu1 - mu0 + t * (y - mu1) / e - (1 - t) * (y - mu0) / (1 - e)
+        self.model_ = _reg(self.params, self.seed).fit(X, pseudo)
+        return self
+
+    def predict(self, X):
+        return self.model_.predict(X)
+
+
+class EnsembleLearner(UpliftLearner):
+    """Mean of member uplift estimates (all in probability points, so averaging keeps scale)."""
+
+    name = "ensemble"
+
+    def __init__(self, members: list[str], params=None, seed: int = 42):
+        super().__init__(params, seed)
+        self.members = members
+
+    def fit(self, X, t, y):
+        self.models_ = [build_learner(m, self.params, self.seed).fit(X, t, y) for m in self.members]
+        return self
+
+    def predict(self, X):
+        return np.mean([m.predict(X) for m in self.models_], axis=0)
+
+
+LEARNERS: dict[str, type[UpliftLearner]] = {
+    cls.name: cls
+    for cls in (
+        RandomLearner,
+        ResponseLearner,
+        SLearner,
+        TLearner,
+        XLearner,
+        ClassTransformation,
+        DRLearner,
+    )
+}
+
+
+def build_learner(name: str, params: dict[str, Any] | None = None, seed: int = 42) -> UpliftLearner:
+    if name.startswith("ensemble:"):
+        return EnsembleLearner(name.split(":", 1)[1].split("+"), params, seed)
+    if name not in LEARNERS:
+        raise KeyError(f"unknown learner {name!r}; choose from {sorted(LEARNERS)}")
+    return LEARNERS[name](params, seed)
+
+
+class UpliftCalibrator:
+    """Monotone map from ranking score to expected uplift in probability points.
+
+    Out-of-fold scores are cut into quantile bins; each bin's observed uplift (treated minus
+    control purchase rate) is regressed on the bin's median score with size-weighted isotonic
+    regression. Binning first keeps the fit stable: a single client's outcome says almost
+    nothing about their uplift. Turns a ranking into numbers a profit rule can use: send when
+    calibrated uplift x margin > message cost.
+    """
+
+    def __init__(self, n_bins: int = 20):
+        self.n_bins = n_bins
+
+    def fit(self, score: np.ndarray, t: np.ndarray, y: np.ndarray) -> UpliftCalibrator:
+        df = pd.DataFrame({"s": np.asarray(score, float), "t": np.asarray(t), "y": np.asarray(y)})
+        df["bin"] = pd.qcut(df.s.rank(method="first"), self.n_bins, labels=False)
+        g = df.groupby("bin")
+        rates = df.pivot_table(index="bin", columns="t", values="y", aggfunc="mean")
+        self.bins_ = pd.DataFrame(
+            {"score": g.s.median(), "n": g.size(), "uplift": rates[1] - rates[0]}
+        )
+        self.iso_ = IsotonicRegression(increasing=True, out_of_bounds="clip")
+        self.iso_.fit(self.bins_.score, self.bins_.uplift, sample_weight=self.bins_.n)
+        return self
+
+    def transform(self, score: np.ndarray) -> np.ndarray:
+        return self.iso_.predict(np.asarray(score, dtype=float))

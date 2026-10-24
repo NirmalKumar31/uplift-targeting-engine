@@ -1,0 +1,44 @@
+version: 2
+
+sources:
+  - name: raw
+    description: X5 RetailHero files landed verbatim by `ute ingest`.
+    schema: raw
+    tables:
+      - name: clients
+        columns:
+          - name: client_id
+            data_tests: [unique, not_null]
+      - name: products
+        columns:
+          - name: product_id
+            data_tests: [unique, not_null]
+      - name: purchases
+      - name: uplift_train
+        columns:
+          - name: client_id
+            data_tests: [unique, not_null]
+          - name: treatment_flg
+            data_tests:
+              - accepted_values: {arguments: {values: [0, 1]}}
+      - name: uplift_test
+
+  - name: ml
+    description: Model outputs written by `ute train` / `ute evaluate` / `ute score`.
+    schema: ml
+    tables:
+      - name: split_assignment
+      - name: leaderboard
+      - name: qini_curves
+      - name: decile_calibration
+      - name: profit_curves
+      - name: policy
+      - name: test_results
+      - name: scores
+      - name: feature_importance
+      - name: drift
+      - name: balance
+      - name: runs
+      - name: sensitivity
+      - name: calibration_bins
+      - name: feature_dependence

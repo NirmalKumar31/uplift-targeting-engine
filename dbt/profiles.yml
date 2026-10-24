@@ -1,0 +1,7 @@
+uplift_warehouse:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('UTE_WAREHOUSE', 'data/warehouse.duckdb') }}"
+      threads: 4

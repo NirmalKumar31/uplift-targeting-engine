@@ -1,0 +1,107 @@
+"""Download the raw X5 files (checksum-verified) and land them in the warehouse `raw` schema."""
+
+from __future__ import annotations
+
+import hashlib
+import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
+
+import duckdb
+
+from uplift_engine.config import Config
+from uplift_engine.warehouse import connect
+
+# Explicit column types: DuckDB's sniffer would otherwise guess per file and could drift.
+RAW_SCHEMAS: dict[str, dict[str, str]] = {
+    "clients": {
+        "client_id": "VARCHAR",
+        "first_issue_date": "TIMESTAMP",
+        "first_redeem_date": "TIMESTAMP",
+        "age": "INTEGER",
+        "gender": "VARCHAR",
+    },
+    "products": {
+        "product_id": "VARCHAR",
+        "level_1": "VARCHAR",
+        "level_2": "VARCHAR",
+        "level_3": "VARCHAR",
+        "level_4": "VARCHAR",
+        "segment_id": "DOUBLE",
+        "brand_id": "VARCHAR",
+        "vendor_id": "VARCHAR",
+        "netto": "DOUBLE",
+        "is_own_trademark": "INTEGER",
+        "is_alcohol": "INTEGER",
+    },
+    "purchases": {
+        "client_id": "VARCHAR",
+        "transaction_id": "VARCHAR",
+        "transaction_datetime": "TIMESTAMP",
+        "regular_points_received": "DOUBLE",
+        "express_points_received": "DOUBLE",
+        "regular_points_spent": "DOUBLE",
+        "express_points_spent": "DOUBLE",
+        "purchase_sum": "DOUBLE",
+        "store_id": "VARCHAR",
+        "product_id": "VARCHAR",
+        "product_quantity": "DOUBLE",
+        "trn_sum_from_iss": "DOUBLE",
+        "trn_sum_from_red": "DOUBLE",
+    },
+    "uplift_train": {"client_id": "VARCHAR", "treatment_flg": "INTEGER", "target": "INTEGER"},
+    "uplift_test": {"client_id": "VARCHAR"},
+}
+
+
+def sha256(path: Path, chunk: int = 1 << 20) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        while block := fh.read(chunk):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def download(cfg: Config, force: bool = False) -> list[Path]:
+    """Fetch every configured file into raw_dir and verify its SHA-256."""
+    cfg.paths.raw_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name, expected in cfg.dataset.files.items():
+        dest = cfg.paths.raw_dir / name
+        if force or not dest.exists():
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            urllib.request.urlretrieve(f"{cfg.dataset.base_url}/{name}", tmp)
+            tmp.replace(dest)
+        actual = sha256(dest)
+        if actual != expected:
+            raise ValueError(
+                f"{name}: checksum mismatch (expected {expected[:12]}, got {actual[:12]})"
+            )
+        paths.append(dest)
+    return paths
+
+
+def load_raw(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[str, int]:
+    """(Re)create raw.<table> for every file and log row counts + hashes to meta.ingest_log."""
+    con = con or connect(cfg)
+    con.execute("CREATE SCHEMA IF NOT EXISTS raw")
+    con.execute("CREATE SCHEMA IF NOT EXISTS meta")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS meta.ingest_log ("
+        "table_name VARCHAR, file_name VARCHAR, sha256 VARCHAR, n_rows BIGINT, loaded_at TIMESTAMP)"
+    )
+    counts = {}
+    for table, columns in RAW_SCHEMAS.items():
+        file = cfg.paths.raw_dir / f"{table}.csv.gz"
+        cols = ", ".join(f"'{c}': '{t}'" for c, t in columns.items())
+        con.execute(
+            f"CREATE OR REPLACE TABLE raw.{table} AS "
+            f"SELECT * FROM read_csv('{file.as_posix()}', header=true, columns={{{cols}}})"
+        )
+        n = con.execute(f"SELECT count(*) FROM raw.{table}").fetchone()[0]
+        con.execute(
+            "INSERT INTO meta.ingest_log VALUES (?, ?, ?, ?, ?)",
+            [table, file.name, cfg.dataset.files.get(file.name, ""), n, datetime.now(UTC)],
+        )
+        counts[table] = n
+    return counts

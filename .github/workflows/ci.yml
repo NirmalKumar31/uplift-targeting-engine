@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-extras
+      - name: Lint
+        run: uv run ruff format --check . && uv run ruff check .
+      - name: Unit + end-to-end tests (synthetic data)
+        run: uv run pytest --cov --cov-report=term-missing
+      - name: dbt project compiles
+        run: uv run dbt parse --project-dir dbt --profiles-dir dbt

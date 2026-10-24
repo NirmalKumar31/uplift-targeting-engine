@@ -1,0 +1,22 @@
+# data & build outputs (raw data is downloaded by `ute ingest`, never committed)
+data/raw/
+data/*.duckdb
+data/*.duckdb.wal
+artifacts/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+# local
+.env
+.DS_Store
+.claude/settings.local.json
+dbt/.user.yml

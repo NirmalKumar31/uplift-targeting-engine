@@ -1,0 +1,28 @@
+name: uplift_warehouse
+version: "1.0.0"
+config-version: 2
+profile: uplift_warehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages", "logs"]
+
+vars:
+  # Day after the last transaction in purchases: every recency/window feature is measured from here.
+  reference_date: "2019-03-19"
+
+models:
+  uplift_warehouse:
+    staging:
+      +schema: staging
+      +materialized: table
+      +tags: ["features"]
+    features:
+      +schema: features
+      +materialized: table
+      +tags: ["features"]
+    marts:
+      +schema: marts
+      +materialized: table
+      +tags: ["marts"]

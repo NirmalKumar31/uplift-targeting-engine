@@ -1,0 +1,11 @@
+services:
+  dashboard:
+    build: .
+    ports: ["8501:8501"]
+  api:
+    build: .
+    command: uvicorn uplift_engine.api:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+      - ./data/warehouse.duckdb:/app/data/warehouse.duckdb:ro

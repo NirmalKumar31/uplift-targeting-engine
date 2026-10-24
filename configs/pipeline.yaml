@@ -1,0 +1,59 @@
+# Single source of truth for every pipeline stage. Paths are relative to the repo root.
+
+paths:
+  raw_dir: data/raw
+  warehouse: data/warehouse.duckdb
+  artifacts_dir: artifacts
+  marts_dir: data/marts
+
+dataset:
+  # X5 RetailHero uplift dataset (randomised SMS experiment, ~200k labelled clients).
+  base_url: https://huggingface.co/datasets/pytorch-lifestream/retailhero-uplift/resolve/main/data
+  files:
+    clients.csv.gz: b8985170e03dc65fa532fb6b8ca6dd70ea5c30c35ea7c1019ee6ea2034d04099
+    products.csv.gz: 6b72e025ff77974940ebdba63998a4349ae290a33efeb41f29989fdea6e96573
+    purchases.csv.gz: 1342e14e1aa9d39dc242f1b66c903f0576fd184af9dc5a3bbe932607dc2d8aba
+    uplift_train.csv.gz: 23aced68634c605acb93a7ab450aabac1a0ce0c8104e59ffed9941109ddc4ccd
+    uplift_test.csv.gz: 8b98fe6ee94478253f40e7ed7ebbbefeb47c78ab37fd41111f3b35b8b69373e0
+
+experiment:
+  seed: 42
+  # Locked holdout: stratified on treatment x target, scored exactly once by `ute evaluate`.
+  test_share: 0.2
+  # Cross-fitting folds on the development set (model selection + out-of-fold scores).
+  n_folds: 5
+  n_bootstrap: 500
+
+models:
+  # Learners compared on out-of-fold Qini; every one shares the LightGBM base config.
+  candidates: [random, response, s_learner, t_learner, x_learner, class_transformation, dr_learner]
+  # Rank-average ensemble of the k best learners on out-of-fold Qini.
+  ensemble_top_k: 3
+  lightgbm:
+    n_estimators: 300
+    learning_rate: 0.03
+    num_leaves: 31
+    min_child_samples: 200
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.7
+    reg_lambda: 5.0
+    verbose: -1
+  tuning:
+    enabled: false
+    n_trials: 25
+
+economics:
+  # X5 is public, so these are documented assumptions; replace with real figures.
+  currency: RUB
+  sms_cost: 3.0
+  # X5 Retail Group reported 2019 gross margin (24.6%).
+  gross_margin: 0.246
+  # null = mean transaction value in purchases x gross_margin.
+  margin_per_purchase: null
+  # Share of the chosen send list held back as a randomised control group.
+  holdout_share: 0.10
+
+monitoring:
+  psi_warn: 0.10
+  psi_fail: 0.25

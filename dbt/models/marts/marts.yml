@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: dim_client
+    description: Customer 360 of the release (scores, predicted group, frozen campaign action).
+    columns:
+      - name: client_id
+        data_tests: [unique, not_null]
+      - name: action
+        data_tests:
+          - accepted_values: {arguments: {values: ['send', 'holdout', 'ineligible']}}
+      - name: age_band
+        data_tests:
+          - accepted_values: {arguments: {values: ['14-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+', 'Unknown']}}
+      - name: predicted_group
+        data_tests:
+          - accepted_values: {arguments: {values: ['Predicted persuadable', 'Predicted sure thing', 'Predicted lost cause', 'Predicted do-not-disturb']}}
+      - name: uplift_decile
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 1, high: 10}}
+    data_tests:
+      - age_band_consistent
+  - name: mart_decile_summary
+    columns:
+      - name: uplift_decile
+        data_tests: [unique]
+  - name: mart_model_leaderboard
+    columns:
+      - name: model
+        data_tests: [unique]
+  - name: mart_campaign_policy
+    data_tests:
+      - row_count_equals: {arguments: {n: 1}}

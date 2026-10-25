@@ -1,6 +1,8 @@
-{# Leakage guard: no feature input may be dated on or after the reference date (the SMS). #}
-{% test no_future_dates(model, columns) %}
+{# Leakage guard: no value of the listed timestamp columns may be on or after the as_of cutoff.
+   Usable at model level (columns: [...]) or column level (column_name). #}
+{% test no_future_dates(model, column_name=none, columns=none) %}
+{% set cols = columns if columns else [column_name] %}
 select *
 from {{ model }}
-where {% for c in columns %}{{ c }} >= timestamp '{{ var("reference_date") }}'{% if not loop.last %} or {% endif %}{% endfor %}
+where {% for c in cols %}{{ c }} >= {{ as_of() }}{% if not loop.last %} or {% endif %}{% endfor %}
 {% endtest %}

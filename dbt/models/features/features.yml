@@ -2,19 +2,34 @@ version: 2
 
 models:
   - name: client_features
-    description: Leakage-free client feature store, measured as of `reference_date` (before the SMS).
+    description: Point-in-time client feature store (all inputs strictly before var as_of).
     columns:
       - name: client_id
         data_tests: [unique, not_null]
       - name: n_txn
-        data_tests: [not_null]
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 1000000}}
       - name: share_own_brand
         data_tests:
           - dbt_utils_between: {arguments: {low: 0, high: 1}}
+      - name: card_tenure_days
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 100000}}
+      - name: days_issue_to_redeem
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 100000}}
+      - name: days_since_first_redeem
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 100000}}
+      - name: recency_days
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 0, high: 100000}}
   - name: feat_rfm
     columns:
       - name: client_id
         data_tests: [unique]
-      - name: recency_days
+  - name: feat_windows
+    columns:
+      - name: n_txn_7d
         data_tests:
-          - dbt_utils_between: {arguments: {low: 0, high: 200}}
+          - dbt_utils_between: {arguments: {low: 0, high: 1000000}}

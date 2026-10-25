@@ -1,5 +1,5 @@
--- purchases.csv has one row per line item; transaction-level fields repeat on every line.
--- Collapse to one row per transaction so basket-level sums are not multiplied by basket size.
+-- One row per (client, transaction). Transaction-level fields repeat on every line item;
+-- any_value() is safe because source test consistent_within guarantees they agree.
 select
     client_id,
     transaction_id,
@@ -12,5 +12,5 @@ select
     abs(any_value(express_points_spent)) as express_points_spent,
     count(*) as n_lines,
     sum(product_quantity) as n_units
-from {{ source('raw', 'purchases') }}
+from {{ ref('stg_purchase_lines') }}
 group by client_id, transaction_id

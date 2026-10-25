@@ -1,9 +1,9 @@
--- What a client buys, from line items joined to the product catalogue.
+-- What a client buys, from pre-cutoff line items joined to the product catalogue.
 -- level_1 has three top-level departments; spend shares use trn_sum_from_iss (line value).
 with lines as (
     select p.client_id, p.product_id, p.product_quantity, p.trn_sum_from_iss as line_sum,
            pr.level_1, pr.level_3, pr.is_own_trademark, pr.is_alcohol
-    from {{ source('raw', 'purchases') }} p
+    from {{ ref('stg_purchase_lines') }} p
     left join {{ source('raw', 'products') }} pr using (product_id)
 )
 select

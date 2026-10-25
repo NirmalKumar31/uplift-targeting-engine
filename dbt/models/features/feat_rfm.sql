@@ -1,5 +1,4 @@
-{% set ref_date = "timestamp '" ~ var('reference_date') ~ "'" %}
--- Recency / frequency / monetary, basket shape and store loyalty, from transaction-level rows.
+-- Recency / frequency / monetary, basket shape and store loyalty (pre-cutoff transactions only).
 with store_counts as (
     select client_id, store_id, count(*) as n
     from {{ ref('stg_transactions') }}
@@ -13,9 +12,10 @@ top_store as (
 select
     t.client_id,
     count(*) as n_txn,
-    date_diff('day', max(transaction_at), {{ ref_date }}) as recency_days,
-    date_diff('day', min(transaction_at), {{ ref_date }}) as first_txn_days_ago,
-    date_diff('day', min(transaction_at), max(transaction_at)) / greatest(count(*) - 1, 1) as mean_gap_days,
+    {{ days_between('max(transaction_at)', as_of()) }} as recency_days,
+    {{ days_between('min(transaction_at)', as_of()) }} as first_txn_days_ago,
+    {{ days_between('min(transaction_at)', 'max(transaction_at)') }} / greatest(count(*) - 1, 1)
+        as mean_gap_days,
     sum(purchase_sum) as spend_total,
     avg(purchase_sum) as basket_avg,
     median(purchase_sum) as basket_median,

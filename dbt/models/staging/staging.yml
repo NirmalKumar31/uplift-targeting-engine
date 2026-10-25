@@ -10,10 +10,17 @@ models:
       - name: gender
         data_tests:
           - accepted_values: {arguments: {values: ['F', 'M', 'U']}}
+      - name: age
+        data_tests:
+          - dbt_utils_between: {arguments: {low: 14, high: 100}}
+  - name: stg_purchase_lines
+    data_tests:
+      - no_future_dates: {arguments: {columns: [transaction_datetime]}}
   - name: stg_transactions
     description: One row per transaction (line items collapsed).
     data_tests:
       - dbt_utils_unique_combination: {arguments: {columns: [client_id, transaction_id]}}
+      - no_future_dates: {arguments: {columns: [transaction_at]}}
     columns:
       - name: purchase_sum
         data_tests: [not_null]
@@ -24,3 +31,12 @@ models:
           - unique
           - not_null
           - relationships: {arguments: {to: ref('stg_clients'), field: client_id}}
+      - name: treatment
+        data_tests:
+          - not_null
+          - accepted_values: {arguments: {values: [0, 1]}}
+      - name: target
+        data_tests:
+          - not_null
+          - accepted_values: {arguments: {values: [0, 1]}}
+  - name: stg_data_quality

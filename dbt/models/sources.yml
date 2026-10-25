@@ -2,43 +2,104 @@ version: 2
 
 sources:
   - name: raw
-    description: X5 RetailHero files landed verbatim by `ute ingest`.
+    description: X5 RetailHero files landed verbatim (checksum-verified) by `ute ingest`.
     schema: raw
     tables:
       - name: clients
         columns:
           - name: client_id
             data_tests: [unique, not_null]
+          - name: first_issue_date
+            # A card issued after the cutoff cannot have pre-cutoff history: fail the build.
+            data_tests:
+              - no_future_dates: {arguments: {columns: [first_issue_date]}}
       - name: products
         columns:
           - name: product_id
             data_tests: [unique, not_null]
       - name: purchases
+        description: One row per line item; transaction-level fields repeat on every line.
+        data_tests:
+          # Purchases at/after the cutoff would leak post-SMS behaviour into features: fail.
+          - no_future_dates: {arguments: {columns: [transaction_datetime]}}
+          - consistent_within:
+              arguments:
+                group_by: [client_id, transaction_id]
+                columns: [transaction_datetime, store_id, purchase_sum, regular_points_received,
+                          express_points_received, regular_points_spent, express_points_spent]
+        columns:
+          - name: client_id
+            data_tests:
+              - not_null
+              - relationships: {arguments: {to: "source('raw', 'clients')", field: client_id}}
+          - name: transaction_id
+            data_tests: [not_null]
+          - name: transaction_datetime
+            data_tests: [not_null]
+          - name: purchase_sum
+            data_tests: [not_null]
+          - name: product_id
+            data_tests:
+              - not_null
+              - relationships: {arguments: {to: "source('raw', 'products')", field: product_id}}
       - name: uplift_train
         columns:
           - name: client_id
-            data_tests: [unique, not_null]
+            data_tests:
+              - unique
+              - not_null
+              - relationships: {arguments: {to: "source('raw', 'clients')", field: client_id}}
+              - disjoint: {arguments: {other: "source('raw', 'uplift_test')", other_column: client_id}}
           - name: treatment_flg
             data_tests:
+              - not_null
+              - accepted_values: {arguments: {values: [0, 1]}}
+          - name: target
+            data_tests:
+              - not_null
               - accepted_values: {arguments: {values: [0, 1]}}
       - name: uplift_test
+        columns:
+          - name: client_id
+            data_tests:
+              - unique
+              - not_null
+              - relationships: {arguments: {to: "source('raw', 'clients')", field: client_id}}
 
   - name: ml
-    description: Model outputs written by `ute train` / `ute evaluate` / `ute score`.
+    description: Model output history written by the pipeline; every row carries run_id.
     schema: ml
     tables:
-      - name: split_assignment
+      - name: assessment_policies
+      - name: assessment_differences
+      - name: assessment_folds
+      - name: assessment_calibration
+      - name: assessment_transfer
+      - name: assessment_selection
+      - name: assessment_ranking
+      - name: fold_assignment
       - name: leaderboard
       - name: qini_curves
       - name: decile_calibration
       - name: profit_curves
-      - name: policy
-      - name: test_results
+      - name: calibration_bins
       - name: scores
+      - name: campaign_assignment
+      - name: policy
+      - name: sensitivity
+      - name: historical_test
+      - name: historical_differences
+      - name: historical_policies
       - name: feature_importance
+      - name: surrogate_fidelity
+      - name: shap_exact_check
+      - name: feature_dependence
       - name: drift
       - name: balance
+
+  - name: meta
+    schema: meta
+    tables:
       - name: runs
-      - name: sensitivity
-      - name: calibration_bins
-      - name: feature_dependence
+      - name: releases
+      - name: test_access_log

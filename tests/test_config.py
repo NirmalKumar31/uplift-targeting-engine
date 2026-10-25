@@ -43,3 +43,16 @@ def test_project_root_resolution(tmp_path, monkeypatch):
         project_root()
     monkeypatch.delenv("UTE_ROOT")
     assert project_root(start=REPO / "src") == REPO
+
+
+def test_cli_outside_a_checkout_fails_cleanly(monkeypatch):
+    from typer.testing import CliRunner
+
+    import uplift_engine.cli as cli
+
+    def no_root(*args, **kwargs):
+        raise ProjectRootError("cannot find the project root")
+
+    monkeypatch.setattr(cli, "load_config", no_root)
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exit_code == 2 and "project root" in result.output

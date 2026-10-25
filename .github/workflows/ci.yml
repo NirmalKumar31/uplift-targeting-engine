@@ -5,18 +5,71 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  UV_VERSION: "0.13.5"
+
 jobs:
   test:
+    name: lint, unit + raw-fixture integration (locked deps)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
+          version: ${{ env.UV_VERSION }}
           python-version: "3.12"
-      - run: uv sync --all-extras
+      - run: uv sync --locked --all-extras --group browser
       - name: Lint
         run: uv run ruff format --check . && uv run ruff check .
-      - name: Unit + end-to-end tests (synthetic data)
+      - name: Tests (unit + end-to-end on the raw fixture, incl. dbt build failures)
         run: uv run pytest --cov --cov-report=term-missing
-      - name: dbt project compiles
-        run: uv run dbt parse --project-dir dbt --profiles-dir dbt
+      - name: dbt project parses with the configured vars
+        run: >
+          uv run dbt parse --project-dir dbt --profiles-dir dbt
+          --vars '{"as_of": "2019-03-19 00:00:00", "release_id": "ci"}'
+      - name: Fixture release -> static site -> real-browser check (Chrome)
+        run: |
+          uv run python scripts/build_fixture_release.py "$RUNNER_TEMP/fixture"
+          uv run python scripts/build_site.py --marts "$RUNNER_TEMP/fixture/marts" --out "$RUNNER_TEMP/site/index.html"
+          uv run python -m playwright install-deps chromium || true
+          uv run python scripts/browser_check.py --site "$RUNNER_TEMP/site/index.html"
+
+  lowest:
+    name: tests on the lowest supported dependency versions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+      - run: uv run --isolated --resolution lowest-direct --all-extras --group dev pytest
+
+  container:
+    name: docker image (dashboard from committed marts, API without/with a release)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+      - run: docker build -t ute .
+      - name: Dashboard serves the committed marts
+        run: |
+          docker run -d --name dash -p 8501:8501 ute
+          for i in $(seq 30); do curl -fs localhost:8501/_stcore/health && break; sleep 2; done
+          curl -fs localhost:8501/_stcore/health
+      - name: API is alive but not ready without a release
+        run: |
+          docker run -d --name api0 -p 8000:8000 ute uvicorn uplift_engine.api:app --host 0.0.0.0 --port 8000
+          for i in $(seq 30); do curl -fs localhost:8000/health && break; sleep 2; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/ready)" = 503
+      - name: API is ready with a mounted fixture release
+        run: |
+          uv sync --locked --all-extras
+          uv run python scripts/build_fixture_release.py "$RUNNER_TEMP/fx"
+          docker run -d --name api1 -p 8001:8000 -v "$RUNNER_TEMP/fx/releases:/app/releases:ro" \
+            ute uvicorn uplift_engine.api:app --host 0.0.0.0 --port 8000
+          for i in $(seq 30); do curl -fs localhost:8001/health && break; sleep 2; done
+          curl -fs localhost:8001/ready

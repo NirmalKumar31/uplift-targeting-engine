@@ -17,7 +17,7 @@ from rich.console import Console
 
 from uplift_engine import ingest as ingest_mod
 from uplift_engine import pipeline, release
-from uplift_engine.config import Config, load_config
+from uplift_engine.config import Config, ProjectRootError, load_config
 from uplift_engine.lineage import (
     Run,
     dataset_fingerprint,
@@ -36,7 +36,11 @@ ConfigOpt = typer.Option(
 
 
 def _cfg(path: Path | None) -> Config:
-    return load_config(path)
+    try:
+        return load_config(path)
+    except ProjectRootError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
 
 
 def _log(msg: str) -> None:

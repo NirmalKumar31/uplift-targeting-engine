@@ -1,26 +1,32 @@
-.PHONY: setup data pipeline train dashboard api test lint docker clean
+.PHONY: setup pipeline release-only dashboard api test test-lowest browser-check site lint docker clean
 
-setup:            ## install everything (python 3.12 + uv)
-	uv sync --all-extras
+setup:            ## install everything (CPython 3.12 + uv 0.13.x)
+	uv sync --locked --all-extras --group browser
 
-data:             ## download + checksum + land raw files, build the feature store
-	uv run ute ingest
-	uv run ute transform
-
-pipeline:         ## full run: ingest -> dbt features -> train -> test eval -> deploy -> explain -> dbt marts
+pipeline:         ## ingest -> transform -> assess -> deploy -> historical -> explain -> marts -> release
 	uv run ute run
 
-train:            ## re-run modelling only (features already built)
-	uv run ute train && uv run ute evaluate && uv run ute deploy && uv run ute explain && uv run ute marts
+release-only:     ## rebuild a release from the current feature build (no ingest/transform)
+	uv run ute assess --new-release && uv run ute deploy && uv run ute historical \
+	  && uv run ute explain && uv run ute marts && uv run ute release
+
+site:             ## static snapshot + regenerated README results from the active release
+	uv run python scripts/build_site.py && uv run python scripts/render_readme_results.py
 
 dashboard:        ## BI dashboard on http://localhost:8501
 	uv run streamlit run dashboard/app.py
 
-api:              ## scoring API on http://localhost:8000/docs
+api:              ## API on http://localhost:8000/docs (needs an active release)
 	uv run uvicorn uplift_engine.api:app --port 8000
 
 test:
 	uv run pytest --cov --cov-report=term-missing
+
+test-lowest:      ## the suite on the lowest supported dependency versions
+	uv run --isolated --resolution lowest-direct --all-extras --group dev pytest
+
+browser-check:    ## real Chrome check of docs/index.html
+	uv run --group browser python scripts/browser_check.py --site docs/index.html
 
 lint:
 	uv run ruff format --check . && uv run ruff check .
@@ -29,4 +35,4 @@ docker:           ## dashboard + API containers
 	docker compose up --build
 
 clean:
-	rm -rf artifacts dbt/target dbt/logs data/warehouse.duckdb
+	rm -rf dbt/target dbt/logs data/warehouse.duckdb

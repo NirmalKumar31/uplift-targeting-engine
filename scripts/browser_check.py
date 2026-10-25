@@ -27,11 +27,11 @@ PLOT_JS = """
 () => [...document.querySelectorAll('.js-plotly-plot')].map((gd) => {
   const traces = (gd._fullData || []).map(t => {
     const vals = a => a == null ? [] : Array.from(a);
+    const finite = a => a.filter(v => typeof v === 'number' && Number.isFinite(v)).length;
     const xs = vals(t.x), ys = vals(t.y);
-    const data = ys.length ? ys : xs;
-    const nums = data.filter(v => typeof v === 'number');
+    // the value axis is whichever axis carries numbers (y for vertical, x for horizontal bars)
     return {type: t.type, name: t.name, decorative: t.meta === 'decorative',
-            n: data.length, finite: nums.filter(Number.isFinite).length,
+            n: Math.max(xs.length, ys.length), finite: Math.max(finite(xs), finite(ys)),
             hover: t.hoverinfo !== 'skip'};
   });
   return {id: gd.id, traces};

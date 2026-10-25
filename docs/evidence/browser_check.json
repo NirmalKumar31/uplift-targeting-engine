@@ -1,36 +1,70 @@
 {
-  "checked_at": "2026-10-25T20:11:23.032539+00:00",
+  "checked_at": "2026-10-25T23:01:09.259967+00:00",
   "browser": "Chrome 156.0.8078.48",
   "site": {
     "desktop": {
-      "n_plots": 6,
-      "plots_without_numeric_data": [],
-      "hover_tooltips": [
-        1,
-        1,
-        1,
-        1,
-        1,
-        1
+      "charts": [
+        "policy-value",
+        "calibration",
+        "hist-qini",
+        "decile-effect",
+        "group-mix",
+        "drivers"
       ],
+      "required": [
+        "policy-value",
+        "calibration",
+        "decile-effect",
+        "group-mix",
+        "drivers",
+        "hist-qini"
+      ],
+      "missing_charts": [],
+      "empty_data_traces": {},
+      "charts_without_hover": [],
+      "ok": true,
+      "hover_tooltips": {
+        "policy-value": 1,
+        "calibration": 1,
+        "hist-qini": 1,
+        "decile-effect": 1,
+        "group-mix": 1,
+        "drivers": 1
+      },
       "console_errors": [],
-      "horizontal_overflow_px": 0,
-      "ok": true
+      "horizontal_overflow_px": 0
     },
     "phone": {
-      "n_plots": 6,
-      "plots_without_numeric_data": [],
-      "hover_tooltips": [
-        1,
-        1,
-        1,
-        1,
-        1,
-        1
+      "charts": [
+        "policy-value",
+        "calibration",
+        "hist-qini",
+        "decile-effect",
+        "group-mix",
+        "drivers"
       ],
+      "required": [
+        "policy-value",
+        "calibration",
+        "decile-effect",
+        "group-mix",
+        "drivers",
+        "hist-qini"
+      ],
+      "missing_charts": [],
+      "empty_data_traces": {},
+      "charts_without_hover": [],
+      "ok": true,
+      "hover_tooltips": {
+        "policy-value": 1,
+        "calibration": 1,
+        "hist-qini": 1,
+        "decile-effect": 1,
+        "group-mix": 1,
+        "drivers": 1
+      },
       "console_errors": [],
-      "horizontal_overflow_px": 0,
-      "ok": true
+      "horizontal_overflow_px": 0
     }
   },
   "streamlit": {

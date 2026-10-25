@@ -89,11 +89,14 @@ def test_real_browser_rejects_a_broken_page(tmp_path):
     good = go.Figure(go.Bar(x=["a", "b"], y=[1, 2])).to_html(
         div_id="policy-value", full_html=False, include_plotlyjs="cdn"
     )
+    horizontal = go.Figure(go.Bar(y=["a", "b"], x=[3.0, 4.0], orientation="h")).to_html(
+        div_id="drivers", full_html=False, include_plotlyjs=False
+    )
     empty = go.Figure(go.Bar(x=[], y=[])).to_html(
         div_id="calibration", full_html=False, include_plotlyjs=False
     )
     page = tmp_path / "index.html"
-    page.write_text(f"<!doctype html><html><body>{good}{empty}</body></html>")
+    page.write_text(f"<!doctype html><html><body>{good}{empty}{horizontal}</body></html>")
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome")
         report = bc.check_site(browser, page, bc.REQUIRED_CHARTS)
@@ -101,4 +104,7 @@ def test_real_browser_rejects_a_broken_page(tmp_path):
     desktop = report["desktop"]
     assert not desktop["ok"]
     assert "calibration" in desktop["empty_data_traces"]
-    assert {"decile-effect", "group-mix", "drivers"} <= set(desktop["missing_charts"])
+    assert {"decile-effect", "group-mix"} <= set(desktop["missing_charts"])
+    # a valid horizontal bar chart (numbers on x, labels on y) is NOT flagged
+    assert "drivers" not in desktop["empty_data_traces"]
+    assert "policy-value" not in desktop["empty_data_traces"]

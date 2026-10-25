@@ -1,107 +1,121 @@
 # Methodology
 
-## The question
+This document describes what the pipeline estimates, how, and what each number does and does not
+show. Numbers themselves live in the active release's `results.json`; the README's results block
+is generated from it (`scripts/render_readme_results.py`).
 
-A retailer can text a promotion to any of its 400k loyalty-card holders. Each SMS costs money,
-and some clients would buy anyway. The question isn't *who will buy?*, it's **whose purchase
-does the SMS cause?** That quantity is the individual treatment effect, or uplift:
+## 1. Decision problem
 
-```
-tau(x) = P(buy | x, SMS) - P(buy | x, no SMS)
-```
-
-It is never observed for a single person (each client either got the SMS or didn't), but it can
-be estimated because the data comes from a **randomised experiment**: X5 RetailHero texted a random
-half of 200k clients. Measured covariates are balanced between arms (`ml.balance`: standardised mean
-difference < 0.1); that is a diagnostic consistent with the documented random assignment, not proof
-that randomisation worked.
-
-## Data and features (dbt + DuckDB)
-
-| Layer | Models | Notes |
-|---|---|---|
-| `raw` | 5 tables, 45.8M purchase lines | landed by `ute ingest`, SHA-256 verified, explicit column types |
-| `staging` | `stg_clients`, `stg_transactions`, `stg_experiment` | ages outside 14-100 nulled; `first_redeem_date` values after the reference date dropped (they run to Nov 2019 and are partly caused by the SMS: post-treatment leakage, guarded by the `no_future_dates` test); line items collapsed to 8.0M transactions so basket sums aren't multiplied by basket size |
-| `features` | 6 feature groups → `client_features` (47 columns) | all measured as of `reference_date` 2019-03-19, the day after the last purchase, so nothing after the SMS leaks in |
-| `marts` | 16 BI tables | built on top of model outputs (`ml` schema) |
-
-Feature groups: demographics and card tenure, RFM and basket shape, short-horizon activity and
-momentum (7/14/30/60-day windows), **loyalty-points behaviour** (express points are
-promotion-driven, so they are the closest proxy for past responsiveness to offers), shopping
-habits (hour, weekend), and product mix (own brand, alcohol, department shares, category breadth).
-dbt data tests guard keys, accepted values and ranges at every layer.
-
-## Learners
-
-All learners share one LightGBM configuration (`configs/pipeline.yaml`) and are implemented in
-`src/uplift_engine/models/learners.py`:
-
-| Learner | Idea |
+| | |
 |---|---|
-| S-learner | one model with treatment as a feature; uplift = f(x,1) − f(x,0) |
-| T-learner | one model per arm; uplift = μ₁(x) − μ₀(x) |
-| X-learner | impute individual effects from the opposite arm's model, regress them, blend by propensity |
-| Class transformation | z = 1 if (SMS ∧ bought) ∨ (no SMS ∧ didn't); uplift = 2P(z=1) − 1 |
-| DR-learner | regress the doubly-robust pseudo-outcome, with 2-fold cross-fitted nuisance models |
-| Ensemble | mean of the top-k learners' uplift estimates (same units, so averaging keeps scale) |
-| *response* (baseline) | P(buy \| SMS): the traditional "target likely buyers" approach |
-| *random* (baseline) | sanity floor |
+| Population | X5 loyalty-card holders in the 2019 snapshot (400,162). Labelled: the 200,039 customers of the randomised SMS experiment. |
+| Treatment | Receiving the campaign SMS (`treatment_flg`). Assignment was random according to the dataset documentation; we treat that as a design assumption. |
+| Outcome | `target`: the customer purchased in the campaign's outcome window (binary; the horizon is defined by the competition, not by this project). |
+| Effect | uplift τ(x) = P(buy \| x, SMS) − P(buy \| x, no SMS). |
+| Assumed utility | value = margin × additional buyers − SMS cost, with margin = mean historical basket × X5's reported 24.6% gross margin (≈ ₽105) and SMS cost ₽3. **An assumption**: a constant basket margin does not identify causal incremental revenue or the number of extra transactions. Break-even uplift = cost / margin ≈ 2.85%. |
+| Deployed action | Text a customer iff calibrated effect × margin **>** SMS cost (strict). In the frozen campaign, an eligible customer is held out iff sha256(campaign_id:client_id)/2⁶⁴ < 0.10. |
 
-## Evaluation protocol
+## 2. Point-in-time features (dbt)
 
-1. **Locked test split.** 20% of the experiment (40,008 clients), stratified on treatment ×
-   outcome, is set aside before anything is fitted.
-2. **Cross-fitting on development.** Every learner is fitted 5 times on the remaining 160k
-   clients; each client is scored by the fold model that never saw them. These out-of-fold scores
-   drive every development decision: champion choice, ensemble members, and targeting depth.
-3. **Fixed selection rule.** The champion is the highest out-of-fold Qini among uplift learners
-   (including the ensemble), decided before test is touched.
-4. **Test access (historical).** `ute evaluate` fits the champion on development data and scores
-   test, logging each call to `meta.test_access_log`. The split was scored twice (before and after
-   the leakage fix) and reused by the 2026-10-25 audit, so it is a reused holdout. The log covers only
-   `pipeline.evaluate()`; it is an audit aid, not a lock.
-5. **Uncertainty (withdrawn).** The original bootstrap resampled within treatment × outcome cells,
-   which froze the response counts and understated uncertainty (a zero-width blanket-profit
-   interval). Those intervals are withdrawn pending the corrected arm-level bootstrap.
+`dataset.as_of` (2019-03-19 00:00, configured once) is a **feature cutoff**: every input must be
+strictly earlier. The competition documentation says purchase history precedes the SMS; the exact
+SMS timestamp is not published, so the cutoff is the day after the last purchase rather than a
+claimed send time.
 
-Metrics match scikit-uplift's definitions (cross-checked to 10 decimal places) but are
-implemented directly and vectorised:
+- All purchase features, including product mix, read `stg_purchase_lines` (`< as_of`). Source
+  tests fail the build on purchase lines at or after the cutoff, null timestamps, contradictory
+  transaction-level fields within (client, transaction), orphan client/product keys, train/test
+  overlap and non-binary treatment/outcome.
+- Windows are half-open elapsed-time intervals `[as_of − N days, as_of)`. Timestamps are store
+  local time without a timezone.
+- Cleaning rules are counted in `stg_data_quality`: redemptions after the cutoff (post-treatment,
+  44,953) and before card issue (536) become unknown and are flagged; ages outside 14–100 (1,779)
+  become unknown. Ages 14–17 are reported as their own band.
 
-- **Qini AUC** (normalised): area between the model's Qini curve and the random line, divided by
-  the same area for a perfect ranking. 0 = random, 1 = perfect.
-- **Uplift@k**: treated minus control purchase rate among the top k% by score.
+## 3. The policy procedure
 
-## From ranking to decision
+Defined once (`pipeline.fit_procedure`) and used by both assessment and deployment:
 
-**Calibration.** Out-of-fold scores are cut into 20 quantile bins; each bin's observed uplift is
-regressed on its median score with size-weighted isotonic regression. That gives every client an
-*expected uplift in probability points*, a number the economics can use.
+1. 5-fold inner cross-fitting of every candidate (S, T, X, class-transformation with arm
+   reweighting, DR; response and random baselines) on the training customers.
+2. Champion = highest inner out-of-fold Qini among uplift learners and a top-3 mean ensemble.
+3. Calibrator = size-weighted isotonic regression of observed uplift on the champion's inner OOF
+   scores in 20 quantile bins.
+4. Champion refitted on all training customers; calibrated effect → strict cost/margin rule.
+5. Comparator: the response model, refitted, texting its top share chosen on its own inner OOF
+   value curve, so it is optimised on training data too.
 
-**Policy.** With an SMS cost `c` and a margin `m` per extra purchase, texting a client pays when
-`expected_uplift × m > c`, i.e. when expected uplift exceeds the break-even `c / m`. At the
-portfolio level, texting the top share `k` earns `k × (m × uplift@k − c)` per client; the
-profit curve and its bootstrap band are in `ml.profit_curves`, with a sensitivity table for other
-cost/margin ratios.
+## 4. Evidence sources (not interchangeable)
 
-**Control group.** 10% of the selected clients are randomly held back (`action = 'holdout'`) so
-a live campaign can measure its realised lift against the prediction.
+**Outer-fold retrospective validation** (`ute assess`). 5 outer folds over all labelled customers.
+The whole procedure (selection, calibration, threshold, comparator) is fitted on 4 folds and
+applied to the 5th; validation outcomes never enter selection or calibration. Each customer is
+validated once, and their selection flags are pooled. Policy value is estimated by the difference
+in means within the selected group (unbiased under random assignment), scaled per 1,000 customers
+of the evaluated population; it is compared with no-send (0), text-everyone, the optimised response
+policy and the *expected* random policy at the same share. This is **internal** validation: these
+customers were used during earlier exploration and model development, so it does not replace an
+independent test.
 
-**Segments.** Persuadable (expected uplift ≥ break-even), Sure thing (low uplift, P(buy without
-SMS) ≥ 0.7), Lost cause (low uplift, low base rate), Do not disturb (expected uplift ≤ 0).
+**Historical reused test** (`ute historical`). The 2026-10-24 bundle's 40,008-customer test split,
+scored twice by the old pipeline (before and after the leakage fix) and once more to freeze its
+per-customer scores for corrected intervals, and reused by the audit. Shown for continuity, not as
+confirmation.
 
-## Monitoring and explainability
+**Deployment projection** (`ute deploy`). The procedure refitted on all labelled customers and
+applied to all 400k. Sums of calibrated effects × assumed margin over the customers actually
+texted (holdout excluded) are **model-based scenarios**, not observed campaign results.
 
-- **Drift.** PSI of each feature, experiment clients vs the 200k clients outside the experiment
-  (the population the model will actually score). Warn at 0.10, fail at 0.25.
-- **Drivers.** A LightGBM surrogate is fitted to the deployed scores (so it works for ensembles
-  too), and exact TreeSHAP (`pred_contrib`) attributes each score to the features. The
-  surrogate's R² is reported so you know how faithful the explanation is. SHAP describes the
-  model, not causation.
+**Observed experiment slices**. Raw treated − control differences within bands (age, gender,
+tenure, frequency, out-of-fold score decile). Descriptive; slices overlap and are not causal
+statements about demographics.
 
-## Assumptions and limits
+## 5. Uncertainty
 
-- Economics are assumptions: SMS ₽3; margin = mean basket × X5's reported 24.6% 2019 gross
-  margin. Change `configs/pipeline.yaml`, or use the dashboard's ROI simulator.
-- One snapshot, one campaign. The model learns how *this* SMS worked in early 2019.
-- The uplift signal is real but modest. Most of the value sits in the top deciles, which is
-  exactly where a targeted campaign spends its budget.
+All intervals use one bootstrap: customers resampled with replacement **within treatment arm**
+(arm sizes fixed, response counts free), 500 replicates, seed 42, percentile 95% intervals. Paired
+differences use the same draws, so identical policies differ by exactly 0. "Share of draws > 0" is
+a bootstrap fraction, not a probability that a policy is better.
+
+What the intervals include: sampling variability of the evaluation customers for **fixed** scores
+and selections. What they exclude: model fitting, calibration fitting and selection uncertainty
+(the outer folds share training customers, so fold-to-fold spread is shown descriptively, not
+treated as independent replications), and the optimism of choosing a depth from a curve (curve
+bands are pointwise). A seeded repeated-experiment simulation
+(`docs/evidence/bootstrap_coverage_diagnostic.json`) checks the coverage of the ATE and fixed-policy
+intervals against known truths, with Monte Carlo standard errors.
+
+Metric definitions match scikit-uplift (`qini_auc_score(negative_effect=True)`,
+`uplift_at_k(strategy="overall")`); committed reference cases generated by scikit-uplift 0.5.1
+(ties, negative effect, unequal arms) are checked in the tests.
+
+## 6. Calibration transfer
+
+The calibrator is fitted on out-of-fold scores but applied to a refitted model. For each outer fold
+the assessment records the KS distance between those two score distributions and the eligible
+share under each, and the pooled reliability table compares calibrated predictions with observed
+uplift on validation customers.
+
+## 7. Explainability and monitoring
+
+- Attribution is of the **raw uplift score**: a LightGBM surrogate is fitted on 70% of a sample and
+  its fidelity (R², RMSE, error by score decile) is measured on the held-out 30%, where TreeSHAP is
+  computed. For an S-learner champion, exact treatment-on minus treatment-off TreeSHAP is also
+  computed on the log-odds scale (additive there), with its additivity error recorded. SHAP
+  explains the model, not causes.
+- Balance: numeric SMD on non-missing values, SMD per category level, and SMD of every feature's
+  missingness. A diagnostic consistent with random assignment, not proof.
+- PSI compares experiment and non-experiment customers in the same snapshot: a population
+  diagnostic, not temporal monitoring, not a deployment gate.
+- Predicted groups (persuadable, sure thing, lost cause, do-not-disturb) are business labels from
+  model outputs, not identified individual counterfactual types.
+
+## 8. Reproducibility
+
+Every run records git commit + dirty flag, a source-tree fingerprint, config hash, verified raw
+dataset fingerprint, feature build, environment fingerprint, seed and parents (`meta.runs`). Model
+outputs are history tables keyed by run id. A release is activated only after validation (all
+stages succeeded with matching config/data/feature fingerprints and all files present); activation
+replaces `releases/ACTIVE` atomically and swaps the dashboard export; failures leave the previous
+release active. The pre-remediation results are preserved in a hash-manifested snapshot
+(`docs/evidence/2026-10-25_pre_remediation_manifest.json`).

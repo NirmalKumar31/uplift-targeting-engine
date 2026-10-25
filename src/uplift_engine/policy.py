@@ -1,93 +1,238 @@
-"""Campaign economics: turn an uplift ranking into a profit-maximising send decision.
+"""Campaign economics and policy value.
 
-Texting the top share k of clients earns, per client in the base,
-    profit(k) = k * (margin * uplift@k - sms_cost)
-so only the break-even uplift sms_cost / margin matters for where to stop.
+Assumed utility (an assumption, not an identified causal quantity): every additional buyer the SMS
+causes is worth a constant `margin` (historical mean basket x gross margin), and every SMS costs
+`sms_cost`. A policy selects a subset S of customers to text. Its value relative to texting nobody,
+per 1,000 customers in the evaluated population, is estimated from the randomised experiment by the
+difference in means inside S:
+
+    value(S) = 1000 * |S|/N * (margin * (mean(y | T=1, S) - mean(y | T=0, S)) - sms_cost)
+
+This is unbiased for the policy's incremental utility under random assignment, because inside any
+pre-specified subgroup the treated and control customers are exchangeable. An empty S (no-send) has
+value 0 by definition; a nonempty S without both arms is undefined.
+
+All uncertainty comes from `metrics.ArmBootstrap`: customers resampled within arm, each keeping its
+selection flag, outcome and treatment. Policies compared on the same draws give paired differences.
+Intervals are for fixed policies/scores; they exclude model-fitting and selection uncertainty.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 import duckdb
 import numpy as np
 import pandas as pd
 
 from uplift_engine.config import Economics
-from uplift_engine.evaluation.metrics import _as_arrays, _stratified_resample, uplift_by_depth
+from uplift_engine.evaluation.metrics import (
+    ArmBootstrap,
+    MetricInputError,
+    UndefinedMetricError,
+    _uplift_by_depth,
+    validate,
+)
 
 DEPTHS = np.round(np.arange(0.01, 1.0001, 0.01), 2)
 
 
 def margin_per_purchase(econ: Economics, con: duckdb.DuckDBPyConnection | None = None) -> float:
-    """Profit from one incremental purchase: configured, or mean basket x gross margin."""
+    """Assumed profit per additional buyer: configured, or mean basket x gross margin."""
     if econ.margin_per_purchase is not None:
-        return econ.margin_per_purchase
-    if con is None:
-        raise ValueError("margin_per_purchase is null: pass a warehouse connection to derive it")
-    basket = con.execute("SELECT avg(purchase_sum) FROM staging.stg_transactions").fetchone()[0]
-    return float(basket) * econ.gross_margin
+        margin = econ.margin_per_purchase
+    else:
+        if con is None:
+            raise ValueError("margin_per_purchase is null: pass a warehouse connection")
+        basket = con.execute("SELECT avg(purchase_sum) FROM staging.stg_transactions").fetchone()[0]
+        margin = float(basket) * econ.gross_margin
+    if not margin > 0:
+        raise ValueError(f"margin per purchase must be positive, got {margin}")
+    return float(margin)
+
+
+def break_even(margin: float, sms_cost: float) -> float:
+    return sms_cost / margin
+
+
+def select_by_effect(effect: np.ndarray, margin: float, sms_cost: float) -> np.ndarray:
+    """The deployed action: text when calibrated effect x margin is *strictly* above the cost."""
+    return np.asarray(effect, dtype=float) * margin > sms_cost
+
+
+def select_top(score: np.ndarray, share: float) -> np.ndarray:
+    """Top `share` of customers by score (ties broken by position, deterministic)."""
+    if not 0 <= share <= 1:
+        raise MetricInputError(f"share must be in [0, 1], got {share}")
+    n = int(np.floor(share * len(score)))
+    flags = np.zeros(len(score), dtype=bool)
+    flags[np.argsort(-np.asarray(score, dtype=float), kind="mergesort")[:n]] = True
+    return flags
+
+
+def _value(y, t, sel, margin, cost) -> float:
+    n = len(y)
+    if not sel.any():
+        return 0.0
+    yt, ys = t[sel], y[sel]
+    if yt.min() == yt.max():
+        raise UndefinedMetricError("selected group lacks treated or control customers")
+    lift = ys[yt == 1].mean() - ys[yt == 0].mean()
+    return float(1000 * sel.sum() / n * (margin * lift - cost))
+
+
+def policy_value(y, t, selected, margin: float, sms_cost: float) -> float:
+    """Incremental value per 1,000 customers vs texting nobody (see module docstring)."""
+    y, _, t = validate(y, np.zeros(len(y)), t)
+    sel = np.asarray(selected, dtype=bool)
+    if len(sel) != len(y):
+        raise MetricInputError("selected must align with y")
+    return _value(y, t, sel, margin, sms_cost)
+
+
+def expected_random_value(y, t, share: float, margin: float, sms_cost: float) -> float:
+    """Expected value of texting a uniformly random `share`: share x blanket value."""
+    y, _, t = validate(y, np.zeros(len(y)), t)
+    return share * _value(y, t, np.ones(len(y), dtype=bool), margin, sms_cost)
+
+
+def evaluate_policies(
+    y,
+    t,
+    policies: Mapping[str, np.ndarray],
+    margin: float,
+    sms_cost: float,
+    draws: ArmBootstrap,
+    references: tuple[str, ...] = ("blanket", "no_send"),
+    random_shares: Mapping[str, float] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Value of each policy and its paired difference against reference policies.
+
+    `policies` maps a name to a boolean selection vector; "blanket" and "no_send" are added.
+    `random_shares` adds expected-random policies (share x blanket, recomputed on every draw).
+    Returns (values, differences): one row per policy, one row per (policy, reference) pair.
+    """
+    y, _, t = validate(y, np.zeros(len(y)), t)
+    pol = {"no_send": np.zeros(len(y), bool), "blanket": np.ones(len(y), bool)}
+    pol |= {k: np.asarray(v, dtype=bool) for k, v in policies.items()}
+    for k, v in pol.items():
+        if len(v) != len(y):
+            raise MetricInputError(f"policy {k} does not align with the outcomes")
+    rand = dict(random_shares or {})
+
+    def all_values(idx):
+        yy, tt = y[idx], t[idx]
+        out = {}
+        for k, v in pol.items():
+            try:
+                out[k] = _value(yy, tt, v[idx], margin, sms_cost)
+            except UndefinedMetricError:
+                out[k] = np.nan
+        for k, share in rand.items():
+            out[k] = share * out["blanket"]
+        return out
+
+    point = all_values(np.arange(len(y)))
+    reps = [all_values(idx) for idx in draws.indices]
+    names = list(point)
+    rep_mat = {k: np.array([r[k] for r in reps]) for k in names}
+
+    rows = []
+    for k in names:
+        ci = draws.interval(point[k], rep_mat[k])
+        sel = pol.get(k)
+        rows.append(
+            {
+                "policy": k,
+                "value_per_1000": point[k],
+                "value_low": ci.low,
+                "value_high": ci.high,
+                "n_undefined": ci.n_undefined,
+                "selected_share": float(sel.mean()) if sel is not None else rand[k],
+                "n_selected_treated": int((sel & (t == 1)).sum()) if sel is not None else None,
+                "n_selected_control": int((sel & (t == 0)).sum()) if sel is not None else None,
+                "kind": "expected random (share x blanket)" if k in rand else "fixed selection",
+            }
+        )
+    diffs = []
+    for k in names:
+        for ref in references:
+            if ref == k:
+                continue
+            d = rep_mat[k] - rep_mat[ref]
+            ci = draws.interval(point[k] - point[ref], d)
+            ok = d[~np.isnan(d)]
+            diffs.append(
+                {
+                    "policy": k,
+                    "reference": ref,
+                    "difference_per_1000": point[k] - point[ref],
+                    "difference_low": ci.low,
+                    "difference_high": ci.high,
+                    "frac_positive": float((ok > 0).mean()) if len(ok) else np.nan,
+                    "n_undefined": ci.n_undefined,
+                }
+            )
+    return pd.DataFrame(rows), pd.DataFrame(diffs)
 
 
 def profit_curve(
-    y,
-    score,
-    t,
-    margin: float,
-    sms_cost: float,
-    depths: np.ndarray = DEPTHS,
-    n_boot: int = 200,
-    seed: int = 0,
+    y, score, t, margin: float, sms_cost: float, draws: ArmBootstrap, depths: np.ndarray = DEPTHS
 ) -> pd.DataFrame:
-    """Uplift and profit per 1,000 clients at every targeting depth, with bootstrap CIs."""
-    y, score, t = _as_arrays(y, score, t)
-    point = uplift_by_depth(y, score, t, depths)
-    rng = np.random.default_rng(seed)
-    boots = np.array(
-        [
-            uplift_by_depth(y[i], score[i], t[i], depths)
-            for i in (_stratified_resample(t, y, rng) for _ in range(n_boot))
-        ]
-    )
-    to_profit = lambda u: 1000 * depths * (margin * u - sms_cost)  # noqa: E731
-    lo, hi = np.nanquantile(boots, [0.025, 0.975], axis=0)
-    p_boot = to_profit(boots)
+    """Observed uplift and value per 1,000 at every depth of a score ranking.
+
+    Bands are pointwise percentile intervals for a fixed score; they are not simultaneous and do
+    not cover the uncertainty of picking the best depth from this same curve.
+    """
+    y, score, t = validate(y, score, t)
+    point = _uplift_by_depth(y, score, t, depths)
+    boots = np.array([_uplift_by_depth(y[i], score[i], t[i], depths) for i in draws.indices])
+
+    def to_value(u):
+        return 1000 * depths * (margin * u - sms_cost)
+
+    q = lambda a, p: np.nanquantile(a, p, axis=0)  # noqa: E731
+    lo, hi = draws.alpha / 2, 1 - draws.alpha / 2
+    vb = to_value(boots)
     return pd.DataFrame(
         {
             "depth": depths,
             "uplift": point,
-            "uplift_low": lo,
-            "uplift_high": hi,
-            "incremental_per_1000": 1000 * depths * point,
-            "profit_per_1000": to_profit(point),
-            "profit_low": np.nanquantile(p_boot, 0.025, axis=0),
-            "profit_high": np.nanquantile(p_boot, 0.975, axis=0),
+            "uplift_low": q(boots, lo),
+            "uplift_high": q(boots, hi),
+            "additional_buyers_per_1000": 1000 * depths * point,
+            "value_per_1000": to_value(point),
+            "value_low": q(vb, lo),
+            "value_high": q(vb, hi),
+            "n_undefined": np.isnan(boots).sum(axis=0),
         }
     )
 
 
 def best_depth(curve: pd.DataFrame) -> float:
-    """Depth with the highest expected profit; 0 (text nobody) when nothing is profitable."""
-    row = curve.loc[curve.profit_per_1000.idxmax()]
-    return float(row.depth) if row.profit_per_1000 > 0 else 0.0
+    """Depth with the highest *estimated* value; 0 (text nobody) when none is positive.
 
-
-def profit_at(y, score, t, depth: float, margin: float, sms_cost: float) -> float:
-    if depth <= 0:
+    The maximum of a noisy curve is optimistic; treat it as an estimate, not a proven optimum.
+    """
+    vals = curve.value_per_1000.to_numpy()
+    if np.all(np.isnan(vals)):
         return 0.0
-    u = uplift_by_depth(y, score, t, np.array([depth]))[0]
-    return float(1000 * depth * (margin * u - sms_cost))
+    i = int(np.nanargmax(vals))
+    return float(curve.depth.iloc[i]) if vals[i] > 0 else 0.0
 
 
-def sensitivity(curve: pd.DataFrame, margin: float, break_evens: list[float]) -> pd.DataFrame:
-    """Optimal depth for other cost/margin ratios, reusing the measured uplift curve."""
+def sensitivity(curve: pd.DataFrame, margin: float, break_evens) -> pd.DataFrame:
+    """Estimated best depth for other cost/margin ratios, reusing the measured uplift curve."""
     rows = []
     for be in break_evens:
-        profit = 1000 * curve.depth * (margin * curve.uplift - be * margin)
-        i = profit.idxmax()
+        value = 1000 * curve.depth * (margin * curve.uplift - be * margin)
+        i = int(np.nanargmax(value.to_numpy()))
+        best = value.iloc[i] > 0
         rows.append(
             {
                 "break_even_uplift": be,
-                "best_depth": curve.depth[i] if profit[i] > 0 else 0,
-                "profit_per_1000": max(profit[i], 0.0),
+                "best_depth": curve.depth.iloc[i] if best else 0.0,
+                "value_per_1000": value.iloc[i] if best else 0.0,
             }
         )
     return pd.DataFrame(rows)

@@ -74,6 +74,7 @@ would be.
 | Docker on Colima (Docker 29.5.2): image build (`--locked`), dashboard container, API without and with release, campaign authorization in the container | pass |
 | Installed wheel outside the checkout | clean failure without `UTE_ROOT`; loads with it |
 | Batch/API parity, 200 real customers | max difference 0.0 |
+| Fresh `git clone` of the final commit → `uv sync --locked --all-extras` → `pytest` | 99 passed; with no data, pipeline stages stop with a clear "run `ute transform`" message |
 
 ## Reproduce
 

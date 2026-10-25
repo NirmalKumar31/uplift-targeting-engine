@@ -95,14 +95,70 @@ def test_history_is_preserved_across_releases(built):
     assert after == before + 1
 
 
-def test_assessment_never_fits_on_validation_labels(built):
+def test_assessment_never_fits_on_validation_customers_or_labels(built, monkeypatch):
+    """Spy on every outer-fold fit; then perturb fold-0 validation labels with folds held fixed
+    and require fold 0's fitted procedure to be bit-identical (positive control: fold 1 moves)."""
+    import numpy as np
+
+    from uplift_engine import pipeline
+
     cfg, _ = built
-    folds = _q(cfg, "SELECT * FROM ml.assessment_folds")
-    assert (folds.n_train + folds.n_validate == 1600).all()
-    pred = pd.read_parquet(
-        next(cfg.paths.releases_dir.glob("rel-*/assessment_predictions.parquet"))
-    )
-    assert pred.fold.between(0, 1).all() and len(pred) == 1600
+    real_fit, real_load = pipeline.fit_procedure, pipeline.load_experiment
+    recorded, calls = [], []
+
+    class Recording(pipeline.StratifiedKFold):
+        def split(self, X, y=None, groups=None):
+            recorded[:] = list(super().split(X, y, groups))
+            return iter(recorded)
+
+    def spy(X, t, y, cfg_, margin, log=print):
+        proc = real_fit(X, t, y, cfg_, margin, log)
+        calls.append({"ids": set(X.index), "proc": proc})
+        return proc
+
+    monkeypatch.setattr(pipeline, "fit_procedure", spy)
+    monkeypatch.setattr(pipeline, "StratifiedKFold", Recording)
+    with duckdb.connect(str(cfg.paths.warehouse)) as con:
+        pipeline.assess(cfg, con, log=lambda _: None)
+        experiment = real_load(con)
+        X = pipeline.load_features(con, experiment.index)
+    ids = experiment.index.to_numpy()
+    assert len(calls) == cfg.experiment.outer_folds
+    for k, (_, va) in enumerate(recorded):
+        assert not calls[k]["ids"] & set(ids[va]), f"fold {k} trained on validation customers"
+    first = [c["proc"] for c in calls]
+
+    val0 = set(ids[recorded[0][1]])
+    fixed = list(recorded)
+
+    class Fixed:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def split(self, X, y=None, groups=None):
+            return iter(fixed)
+
+    def flipped(con):
+        exp = real_load(con).copy()
+        mask = exp.index.isin(val0)
+        exp.loc[mask, "target"] = 1 - exp.loc[mask, "target"]
+        return exp
+
+    calls.clear()
+    monkeypatch.setattr(pipeline, "StratifiedKFold", Fixed)
+    monkeypatch.setattr(pipeline, "load_experiment", flipped)
+    with duckdb.connect(str(cfg.paths.warehouse)) as con:
+        pipeline.assess(cfg, con, log=lambda _: None)
+    second = [c["proc"] for c in calls]
+
+    Xv = X.iloc[fixed[0][1]]
+    a, b = first[0], second[0]
+    assert a.champion == b.champion
+    pd.testing.assert_frame_equal(a.calibrator.bins_, b.calibrator.bins_)
+    np.testing.assert_array_equal(a.learner.predict(Xv), b.learner.predict(Xv))
+    assert a.response_share == b.response_share
+    # positive control: fold 1 trains on the flipped customers, so its fit must change
+    assert not np.array_equal(first[1].oof[first[1].champion], second[1].oof[second[1].champion])
 
 
 def test_api_contract_parity_and_campaign(built, monkeypatch):
@@ -262,3 +318,38 @@ def test_dashboard_interactions(built, monkeypatch):
     dim = pd.read_parquet(cfg.paths.marts_dir / "dim_client.parquet")
     assert set(send_rows(dim).action) == {"send"}
     assert not send_rows(dim).client_id.isin(dim[dim.action == "holdout"].client_id).any()
+
+
+def test_client_lookup_labelled_unlabelled_unknown(built, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from uplift_engine import api
+    from uplift_engine.release import active_release
+
+    cfg, _ = built
+    monkeypatch.setattr(api, "load_config", lambda: cfg)
+    api._load.cache_clear()
+    client = TestClient(api.app)
+    scores = pd.read_parquet(active_release(cfg)[1] / "scores.parquet")
+    labelled = scores[scores.in_experiment].client_id.iloc[0]
+    unlabelled = scores[~scores.in_experiment].client_id.iloc[0]
+    assert pd.isna(scores.set_index("client_id").loc[unlabelled, "oof_decile"])
+
+    r = client.get(f"/clients/{labelled}")
+    assert r.status_code == 200 and isinstance(r.json()["oof_decile"], int)
+    r = client.get(f"/clients/{unlabelled}")
+    assert r.status_code == 200 and r.json()["oof_decile"] is None
+    assert client.get("/clients/not-a-client").status_code == 404
+
+
+def test_jsonable_handles_every_missing_marker():
+    import numpy as np
+
+    from uplift_engine.api import jsonable
+
+    for missing in (None, np.nan, pd.NA, pd.NaT, float("inf"), np.float64("nan")):
+        assert jsonable(missing) is None
+    assert jsonable(np.int64(3)) == 3 and isinstance(jsonable(np.int64(3)), int)
+    assert jsonable(np.bool_(True)) is True
+    assert jsonable(pd.Timestamp("2019-03-19")) == "2019-03-19T00:00:00"
+    assert jsonable("send") == "send"

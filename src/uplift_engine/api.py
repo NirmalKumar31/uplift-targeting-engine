@@ -187,10 +187,29 @@ def client(client_id: str) -> dict[str, Any]:
     return {
         "client_id": client_id,
         "release_id": rel.release_id,
-        **{k: (v.item() if isinstance(v, np.generic) else v) for k, v in row.items()},
+        **{k: jsonable(v) for k, v in row.items()},
         "note": "batch score of the active release; campaign action is authoritative only "
         "via /campaigns/{id}/authorize",
     }
+
+
+def jsonable(value: Any) -> Any:
+    """Serialization boundary for warehouse scalars: every missing marker (None, NaN, pd.NA,
+    NaT) becomes JSON null; NumPy scalars become Python scalars; timestamps become ISO strings."""
+    if value is None:
+        return None
+    if isinstance(value, (pd.Timestamp, np.datetime64)):
+        return None if pd.isna(value) else pd.Timestamp(value).isoformat()
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):  # array-like values are not scalars
+        pass
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
 
 
 def _campaign(rel: Release, campaign_id: str) -> pd.DataFrame:

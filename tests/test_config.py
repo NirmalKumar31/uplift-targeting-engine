@@ -56,3 +56,27 @@ def test_cli_outside_a_checkout_fails_cleanly(monkeypatch):
     monkeypatch.setattr(cli, "load_config", no_root)
     result = CliRunner().invoke(cli.app, ["status"])
     assert result.exit_code == 2 and "project root" in result.output
+
+
+def test_every_cli_command_parses_through_typer():
+    from typer.testing import CliRunner
+
+    from uplift_engine.cli import app
+
+    runner = CliRunner()
+    assert runner.invoke(app, ["--help"]).exit_code == 0
+    for command in (
+        "ingest",
+        "transform",
+        "assess",
+        "deploy",
+        "historical",
+        "explain",
+        "marts",
+        "release",
+        "export-send-list",
+        "status",
+        "run",
+    ):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0, (command, result.output)

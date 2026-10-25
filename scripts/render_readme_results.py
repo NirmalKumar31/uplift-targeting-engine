@@ -75,6 +75,10 @@ def render(res: dict) -> str:
                 f"{d['frac_positive']:.3f} |"
             )
     lo, hi = A["fold_value_range_deployed"]
+    max_ks = max(t["ks_statistic_oof_vs_refit"] for t in A["transfer"])
+    max_gap = 100 * max(
+        abs(t["eligible_share_inner_oof"] - t["eligible_share_validation"]) for t in A["transfer"]
+    )
     lines += [
         "",
         f"Intervals: {A['bootstrap']['n_boot']} customer-within-arm bootstrap draws for the fixed "
@@ -82,17 +86,22 @@ def render(res: dict) -> str:
         f"by outer fold ranged {rub(lo)} to {rub(hi)} per 1,000 (folds share training data). "
         f"Champion by fold: {', '.join(A['champions_by_fold'])}.",
         "",
+        f"Calibration on validation folds: weighted mean |predicted − observed| uplift "
+        f"{100 * A['calibration_pooled']['weighted_mean_abs_gap']:.2f} pp across 10 bins. "
+        f"OOF-to-refit transfer: KS ≤ {max_ks:.3f}; eligible share (inner OOF vs validation) "
+        f"within {max_gap:.1f} pp in every fold.",
+        "",
         "**2 · Historical reused test** (the 2026-10-24 bundle; not independent confirmation).",
         "",
-        "| Model | Qini AUC [95% CI] | Uplift @10% [95% CI] |",
+        "| Model | Qini AUC [95% CI] | Uplift in top 10%, pp [95% CI] |",
         "|---|---|---|",
     ]
     for m in H["models"]:
         lines.append(
             f"| {m['model']} | {m['qini_auc']:+.4f} "
             f"[{m['qini_auc_low']:+.4f}, {m['qini_auc_high']:+.4f}] | "
-            f"{m['uplift_at_10']:+.1%} [{m['uplift_at_10_low']:+.1%}, "
-            f"{m['uplift_at_10_high']:+.1%}] |"
+            f"{100 * m['uplift_at_10']:+.1f} [{100 * m['uplift_at_10_low']:+.1f}, "
+            f"{100 * m['uplift_at_10_high']:+.1f}] |"
         )
     for d in H["differences"]:
         if d["policy"] == "champion_at_41pct" and d["reference"] == "blanket":

@@ -61,13 +61,15 @@ _Generated from `data/marts/results.json` (release `rel-20261025T191554`, policy
 
 Intervals: 500 customer-within-arm bootstrap draws for the fixed fitted policies; they exclude model-fitting and selection uncertainty. Deployed value by outer fold ranged ₽812 to ₽1,321 per 1,000 (folds share training data). Champion by fold: s_learner, x_learner, s_learner, s_learner, ensemble:dr_learner+s_learner+x_learner.
 
+Calibration on validation folds: weighted mean |predicted − observed| uplift 0.63 pp across 10 bins. OOF-to-refit transfer: KS ≤ 0.031; eligible share (inner OOF vs validation) within 1.5 pp in every fold.
+
 **2 · Historical reused test** (the 2026-10-24 bundle; not independent confirmation).
 
-| Model | Qini AUC [95% CI] | Uplift @10% [95% CI] |
+| Model | Qini AUC [95% CI] | Uplift in top 10%, pp [95% CI] |
 |---|---|---|
-| champion | +0.0164 [+0.0102, +0.0224] | +11.9% [+8.7%, +14.9%] |
-| response | -0.0054 [-0.0108, +0.0004] | +0.9% [-0.2%, +2.0%] |
-| random_draw | -0.0015 [-0.0073, +0.0058] | +2.9% [+0.3%, +5.9%] |
+| champion | +0.0164 [+0.0102, +0.0224] | +11.9 [+8.7, +14.9] |
+| response | -0.0054 [-0.0108, +0.0004] | +0.9 [-0.2, +2.0] |
+| random_draw | -0.0015 [-0.0073, +0.0058] | +2.9 [+0.3, +5.9] |
 
 Historical 41% policy − text everyone: ₽514 [−₽223, ₽1,271] per 1,000 (share of draws > 0: 0.914).
 

@@ -18,7 +18,7 @@ dependencies = [
     "pyyaml>=6.0.1",
     "scikit-learn>=1.5",
     "scipy>=1.13",
-    "typer>=0.12",
+    "typer>=0.15.4",  # "Path | None" options + compatibility with current Click
     "rich>=13.7",
 ]
 

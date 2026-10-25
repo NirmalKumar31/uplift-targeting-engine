@@ -20,3 +20,5 @@ coverage.xml
 .DS_Store
 .claude/settings.local.json
 dbt/.user.yml
+snapshots/
+releases/

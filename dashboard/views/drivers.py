@@ -1,18 +1,42 @@
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from common import BLUE, MUTED, chart, load
 
-st.title("What drives uplift?")
-imp = load("mart_feature_importance").sort_values("mean_abs_contribution", ascending=False)
-r2 = imp.surrogate_r2.iloc[0]
+st.title("What drives the uplift score?")
+fid = load("mart_surrogate_fidelity")
+overall = fid[fid.decile == "all"].set_index("split")
+held = overall.loc["held-out rows"]
+train = overall.loc["surrogate training rows"]
 st.markdown(
-    f"A LightGBM surrogate fitted to the deployed uplift scores (training-sample R² = "
-    f"**{r2:.2f}**; held-out fidelity not yet measured) and exact "
-    "TreeSHAP splits each client's score among the features. This describes what the *model* "
-    "relies on, not what causes buying: correlated features share credit."
+    "This page attributes the champion's **raw uplift score**, not the calibrated effect or the "
+    "profit decision. A LightGBM surrogate is fitted to the scores on 70% of a sample, and "
+    "TreeSHAP of the surrogate is computed on the other 30%. SHAP describes what the model "
+    "relies on, not what causes buying, and correlated features share credit."
 )
+c = st.columns(3)
+c[0].metric(
+    "Surrogate fidelity, held-out R²",
+    f"{held.r2:.3f}",
+    f"training rows R² {train.r2:.3f}",
+    delta_color="off",
+    delta_arrow="off",
+)
+c[1].metric("Held-out RMSE (score units)", f"{held.rmse:.4f}")
+c[2].metric("Held-out rows", f"{int(held.n):,}")
 
+exact = load("mart_shap_exact_check")
+if exact.feature.notna().any():
+    err = exact.max_additivity_error.iloc[0]
+    st.caption(
+        f"Exact check: for the S-learner champion, treatment-on minus treatment-off "
+        f"TreeSHAP contributions add up to the model's log-odds treatment effect "
+        f"(max additivity error {err:.1e}). That exact attribution is on the log-odds "
+        "scale, so the chart below uses the surrogate on the score scale."
+    )
+
+imp = load("mart_feature_importance").sort_values("mean_abs_contribution", ascending=False)
 top = imp.head(15).iloc[::-1]
 fig = go.Figure()
 fig.add_bar(
@@ -25,15 +49,32 @@ fig.add_bar(
     "<extra></extra>",
 )
 fig.update_layout(
-    title="Share of total attribution (top 15 features)",
-    xaxis_title="% of mean |SHAP|",
+    title="Share of mean |SHAP| (held-out rows, top 15)",
+    xaxis_title="% of attribution",
     bargap=0.25,
 )
 chart(fig, 520, legend=False)
 
+err_by = fid[(fid.split == "held-out rows") & (fid.decile != "all")].copy()
+err_by["decile"] = err_by.decile.astype(int)
+fig = go.Figure()
+fig.add_bar(
+    x=err_by.sort_values("decile").decile,
+    y=err_by.sort_values("decile").mae,
+    marker_color=MUTED,
+    hovertemplate="Score decile %{x}: MAE %{y:.4f}<extra></extra>",
+)
+fig.update_layout(
+    title="Surrogate error by score decile (held-out)",
+    xaxis=dict(title="Score decile (1 = lowest)", dtick=1),
+    yaxis_title="Mean absolute error",
+    bargap=0.25,
+)
+chart(fig, 300, legend=False)
+
 st.subheader("How the score moves with each driver")
 dep = load("mart_feature_dependence")
-feats = list(dict.fromkeys(f for f in imp.feature if f in set(dep.feature)))
+feats = [f for f in imp.feature if f in set(dep.feature)]
 feature = st.selectbox("Feature", feats)
 d = dep[dep.feature == feature].sort_values("value")
 fig = go.Figure()
@@ -44,23 +85,16 @@ fig.add_scatter(
     mode="lines+markers",
     line=dict(color=BLUE, width=2),
     marker=dict(size=8, color=BLUE),
-    hovertemplate=f"{feature} ≈ %{{x:,.1f}}<br>%{{y:+.2f}} pp<extra></extra>",
+    customdata=d.n,
+    hovertemplate=f"{feature} ≈ %{{x:,.1f}}<br>%{{y:+.2f}} pp (n=%{{customdata}})<extra></extra>",
 )
 fig.update_layout(
-    xaxis_title=f"{feature} (median of each 5% bin)",
-    yaxis_title="Contribution to uplift score (pp)",
+    xaxis_title=f"{feature} (median of each 5% bin)", yaxis_title="Contribution to raw score (pp)"
 )
 chart(fig, 380, legend=False)
-
 with st.expander("All features"):
     st.dataframe(
-        imp[["feature", "share", "direction_corr", "missing_rate"]].rename(
-            columns={
-                "share": "attribution share",
-                "direction_corr": "direction (corr)",
-                "missing_rate": "missing",
-            }
-        ),
+        pd.DataFrame(imp[["feature", "share", "direction_corr", "missing_rate"]]),
         hide_index=True,
         width="stretch",
     )

@@ -215,11 +215,50 @@ def test_static_site_and_dashboard_smoke(built, tmp_path, monkeypatch):
         cwd=REPO,
     )
     html = (site / "index.html").read_text()
-    assert html.count("cdn.plot.ly") == 1 and "results.json" not in html
+    from plotly.offline import get_plotlyjs_version
+
+    assert html.count("cdn.plot.ly") == 1  # plotly.js loaded exactly once...
+    assert f"plotly-{get_plotlyjs_version()}.min.js" in html  # ...matching the serializer
 
     from streamlit.testing.v1 import AppTest
 
     monkeypatch.setenv("UTE_MARTS_DIR", str(cfg.paths.marts_dir))
+    monkeypatch.syspath_prepend(str(REPO / "dashboard"))  # app.py's directory, as when served
     for page in sorted((REPO / "dashboard" / "views").glob("*.py")):
         at = AppTest.from_file(str(page), default_timeout=120).run()
         assert not at.exception, (page.name, [e.value for e in at.exception])
+
+
+def _app(page: str, marts: Path):
+    from streamlit.testing.v1 import AppTest
+
+    return AppTest.from_file(str(REPO / "dashboard" / "views" / f"{page}.py"), default_timeout=120)
+
+
+def test_dashboard_interactions(built, monkeypatch):
+    cfg, _ = built
+    monkeypatch.setenv("UTE_MARTS_DIR", str(cfg.paths.marts_dir))
+    monkeypatch.syspath_prepend(str(REPO / "dashboard"))
+
+    at = _app("clients", cfg.paths.marts_dir).run()
+    for text in ("[", "(", ".", "c00000"):
+        at.text_input[0].set_value(text).run()
+        assert not at.exception, text
+    assert at.metric[0].value == "0" or text == "c00000"
+    at.text_input[0].set_value(".").run()
+    assert at.metric[0].value == "0"  # '.' is literal, not "any character"
+
+    at = _app("simulator", cfg.paths.marts_dir).run()
+    before = [m.value for m in at.metric]
+    at.slider[1].set_value(300.0).run()
+    after = [m.value for m in at.metric]
+    assert not at.exception and before != after
+    table = at.dataframe[0].value
+    current = table[table["Break-even uplift"].str.contains("current")].iloc[0]
+    assert current["Break-even uplift"].startswith("1.00%")  # 3 / 300
+
+    from common import send_rows
+
+    dim = pd.read_parquet(cfg.paths.marts_dir / "dim_client.parquet")
+    assert set(send_rows(dim).action) == {"send"}
+    assert not send_rows(dim).client_id.isin(dim[dim.action == "holdout"].client_id).any()

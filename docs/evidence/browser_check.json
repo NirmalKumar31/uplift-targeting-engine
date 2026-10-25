@@ -1,0 +1,80 @@
+{
+  "checked_at": "2026-10-25T20:11:23.032539+00:00",
+  "browser": "Chrome 156.0.8078.48",
+  "site": {
+    "desktop": {
+      "n_plots": 6,
+      "plots_without_numeric_data": [],
+      "hover_tooltips": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "console_errors": [],
+      "horizontal_overflow_px": 0,
+      "ok": true
+    },
+    "phone": {
+      "n_plots": 6,
+      "plots_without_numeric_data": [],
+      "hover_tooltips": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "console_errors": [],
+      "horizontal_overflow_px": 0,
+      "ok": true
+    }
+  },
+  "streamlit": {
+    "overview": {
+      "exceptions": 0,
+      "plots": 2,
+      "tables": 1
+    },
+    "simulator": {
+      "exceptions": 0,
+      "plots": 1,
+      "tables": 1
+    },
+    "segments": {
+      "exceptions": 0,
+      "plots": 3,
+      "tables": 1
+    },
+    "models": {
+      "exceptions": 0,
+      "plots": 3,
+      "tables": 3
+    },
+    "drivers": {
+      "exceptions": 0,
+      "plots": 3,
+      "tables": 1
+    },
+    "health": {
+      "exceptions": 0,
+      "plots": 2,
+      "tables": 3
+    },
+    "clients": {
+      "exceptions": 0,
+      "plots": 0,
+      "tables": 1
+    },
+    "client_search_exceptions": {
+      "[": 0,
+      "(": 0,
+      ".": 0
+    },
+    "ok": true
+  },
+  "ok": true
+}

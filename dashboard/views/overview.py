@@ -68,66 +68,63 @@ for col, ref in zip(c[2:], ["blanket", "response_optimized"], strict=True):
         delta_arrow="off",
     )
 
-left, right = st.columns([3, 2])
-with left:
-    order = ["deployed", "response_optimized", "random_expected", "blanket", "no_send"]
-    p = pol.reindex([o for o in order if o in pol.index])
-    fig = go.Figure()
-    fig.add_bar(
-        x=[model_label(i) for i in p.index],
-        y=p.value_per_1000,
-        marker_color=[
-            BLUE if i == "deployed" else (ORANGE if "response" in i else MUTED) for i in p.index
-        ],
-        error_y=dict(
-            type="data",
-            symmetric=False,
-            color=MUTED,
-            thickness=1,
-            array=(p.value_high - p.value_per_1000).fillna(0),
-            arrayminus=(p.value_per_1000 - p.value_low).fillna(0),
-        ),
-        customdata=p.selected_share,
-        hovertemplate="%{x}<br>%{y:,.0f} per 1,000 (texts %{customdata:.0%})<extra></extra>",
-    )
-    fig.add_hline(y=0, line=dict(color=MUTED, width=1))
-    fig.update_layout(
-        title=f"Estimated incremental value per 1,000 customers ({cur.strip()}), 95% intervals",
-        yaxis_title="Value vs texting nobody",
-        bargap=0.35,
-    )
-    chart(
-        fig,
-        380,
-        legend=False,
-        note="Random (expected) = the texted share chosen at random; its value is that share "
-        "of texting everyone. Text nobody is 0 by definition.",
-    )
-with right:
-    st.markdown("**Paired differences (same bootstrap draws)**")
-    show = dif.assign(
-        Comparison=lambda d: d.policy.map(model_label) + " − " + d.reference.map(model_label),
-        Difference=lambda d: d.difference_per_1000.map(lambda v: money(v, cur)),
-        Interval=lambda d: [
-            interval(a, b, lambda v: money(v, cur))
-            for a, b in zip(d.difference_low, d.difference_high, strict=True)
-        ],
-        **{"Share of draws > 0": lambda d: d.frac_positive.map("{:.2f}".format)},
-    )
-    st.dataframe(
-        show[show.policy == "deployed"][
-            ["Comparison", "Difference", "Interval", "Share of draws > 0"]
-        ],
-        hide_index=True,
-        width="stretch",
-    )
-    lo, hi = A["fold_value_range_deployed"]
-    st.caption(
-        f"Fold-by-fold deployed value ranged {money(lo, cur)} to {money(hi, cur)} per "
-        f"1,000 (folds share training data; descriptive only). Champion by fold: "
-        f"{', '.join(model_label(x) for x in A['champions_by_fold'])}. "
-        "'Share of draws > 0' is a bootstrap fraction, not a probability."
-    )
+order = ["deployed", "response_optimized", "random_expected", "blanket", "no_send"]
+p = pol.reindex([o for o in order if o in pol.index])
+fig = go.Figure()
+fig.add_bar(
+    y=[model_label(i) for i in p.index],
+    x=p.value_per_1000,
+    orientation="h",
+    marker_color=[
+        BLUE if i == "deployed" else (ORANGE if "response" in i else MUTED) for i in p.index
+    ],
+    error_x=dict(
+        type="data",
+        symmetric=False,
+        color=MUTED,
+        thickness=1,
+        array=(p.value_high - p.value_per_1000).fillna(0),
+        arrayminus=(p.value_per_1000 - p.value_low).fillna(0),
+    ),
+    customdata=p.selected_share,
+    hovertemplate="%{y}<br>%{x:,.0f} per 1,000 (texts %{customdata:.0%})<extra></extra>",
+)
+fig.add_vline(x=0, line=dict(color=MUTED, width=1))
+fig.update_layout(
+    title=f"Estimated incremental value per 1,000 customers ({cur.strip()}), 95% intervals",
+    xaxis_title="Value vs texting nobody",
+    yaxis=dict(autorange="reversed"),
+    bargap=0.35,
+)
+chart(
+    fig,
+    380,
+    legend=False,
+    note="Random (expected) = the texted share chosen at random; its value is that share "
+    "of texting everyone. Text nobody is 0 by definition.",
+)
+st.markdown("**Paired differences (same bootstrap draws)**")
+show = dif.assign(
+    Comparison=lambda d: d.policy.map(model_label) + " − " + d.reference.map(model_label),
+    Difference=lambda d: d.difference_per_1000.map(lambda v: money(v, cur)),
+    Interval=lambda d: [
+        interval(a, b, lambda v: money(v, cur))
+        for a, b in zip(d.difference_low, d.difference_high, strict=True)
+    ],
+    **{"Share of draws > 0": lambda d: d.frac_positive.map("{:.2f}".format)},
+)
+st.dataframe(
+    show[show.policy == "deployed"][["Comparison", "Difference", "Interval", "Share of draws > 0"]],
+    hide_index=True,
+    width="stretch",
+)
+lo, hi = A["fold_value_range_deployed"]
+st.caption(
+    f"Fold-by-fold deployed value ranged {money(lo, cur)} to {money(hi, cur)} per "
+    f"1,000 (folds share training data; descriptive only). Champion by fold: "
+    f"{', '.join(model_label(x) for x in A['champions_by_fold'])}. "
+    "'Share of draws > 0' is a bootstrap fraction, not a probability."
+)
 
 st.header("2 · Historical reused test (2026-10-24 bundle)")
 source_badge("historical")

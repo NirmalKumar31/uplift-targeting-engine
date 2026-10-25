@@ -41,7 +41,37 @@ confirmation:
 3. **Model-based projections** for the full customer base.
 
 <!-- results:start -->
-_Run `uv run python scripts/render_readme_results.py` to regenerate from `data/marts/results.json`._
+_Generated from `data/marts/results.json` (release `rel-20261025T191554`, policy `06c39b17c1e9d923`). Economics are assumptions: SMS ₽3.00, ₽105 per additional buyer (break-even uplift 2.85%)._
+
+**1 · Outer-fold retrospective validation of the deployed policy** (all 200,039 labelled experiment customers, each validated once by a procedure fitted without its fold; retrospective internal validation on customers already used during earlier exploration; not independent confirmation).
+
+| Policy | Customers texted | Value per 1,000 customers [95% CI] |
+|---|---|---|
+| Deployed policy (calibrated threshold) | 33.7% | ₽1,156 [₽901, ₽1,435] |
+| Response model, own best share | 89.8% | ₽455 [₽79, ₽885] |
+| Random, same share (expected) | 33.7% | ₽168 [₽24, ₽314] |
+| Text everyone | 100.0% | ₽500 [₽72, ₽933] |
+| Text nobody | 0.0% | ₽0 [₽0, ₽0] |
+
+| Paired difference (same draws) | Per 1,000 [95% CI] | Share of draws > 0 |
+|---|---|---|
+| Deployed − text everyone | ₽656 [₽303, ₽1,029] | 1.000 |
+| Deployed − text nobody | ₽1,156 [₽901, ₽1,435] | 1.000 |
+| Deployed − response model, own best share | ₽700 [₽349, ₽1,090] | 1.000 |
+
+Intervals: 500 customer-within-arm bootstrap draws for the fixed fitted policies; they exclude model-fitting and selection uncertainty. Deployed value by outer fold ranged ₽812 to ₽1,321 per 1,000 (folds share training data). Champion by fold: s_learner, x_learner, s_learner, s_learner, ensemble:dr_learner+s_learner+x_learner.
+
+**2 · Historical reused test** (the 2026-10-24 bundle; not independent confirmation).
+
+| Model | Qini AUC [95% CI] | Uplift @10% [95% CI] |
+|---|---|---|
+| champion | +0.0164 [+0.0102, +0.0224] | +11.9% [+8.7%, +14.9%] |
+| response | -0.0054 [-0.0108, +0.0004] | +0.9% [-0.2%, +2.0%] |
+| random_draw | -0.0015 [-0.0073, +0.0058] | +2.9% [+0.3%, +5.9%] |
+
+Historical 41% policy − text everyone: ₽514 [−₽223, ₽1,271] per 1,000 (share of draws > 0: 0.914).
+
+**3 · Deployment projection** (model-based scenario, not an observed result): 400,162 customers scored, 107,013 eligible, 96,182 to text and 10,831 held out (10% random holdout); projected 6,229 additional buyers and ₽367,477 among those texted, vs ₽200,025 for texting everyone under the same assumptions.
 <!-- results:end -->
 
 What the numbers do and don't cover is in [docs/methodology.md](docs/methodology.md).

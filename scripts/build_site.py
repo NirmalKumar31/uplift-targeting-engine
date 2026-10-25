@@ -60,12 +60,13 @@ def main() -> None:
     p = pol.loc[order]
     fig = go.Figure(
         go.Bar(
-            x=[model_label(i) for i in p.index],
-            y=p.value_per_1000,
+            y=[model_label(i) for i in p.index],
+            x=p.value_per_1000,
+            orientation="h",
             marker_color=[
                 BLUE if i == "deployed" else (ORANGE if "response" in i else MUTED) for i in p.index
             ],
-            error_y=dict(
+            error_x=dict(
                 type="data",
                 symmetric=False,
                 color=MUTED,
@@ -73,11 +74,15 @@ def main() -> None:
                 array=(p.value_high - p.value_per_1000).fillna(0),
                 arrayminus=(p.value_per_1000 - p.value_low).fillna(0),
             ),
-            hovertemplate="%{x}: %{y:,.0f} per 1,000<extra></extra>",
+            hovertemplate="%{y}: %{x:,.0f} per 1,000<extra></extra>",
         )
     )
-    fig.add_hline(y=0, line=dict(color=MUTED, width=1))
-    fig.update_layout(yaxis_title="Value vs texting nobody, per 1,000", bargap=0.35)
+    fig.add_vline(x=0, line=dict(color=MUTED, width=1))
+    fig.update_layout(
+        xaxis_title="Value vs texting nobody, per 1,000",
+        yaxis=dict(autorange="reversed"),
+        bargap=0.35,
+    )
     figures.append(
         (
             "assessment",

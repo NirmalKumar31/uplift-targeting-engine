@@ -1,8 +1,10 @@
 -- Qini curves with the random line, labelled by evaluation source.
 with curves as (
     {{ from_run('qini_curves', 'deploy') }}
+    {% if var('has_historical', false) %}
     union all
     {{ from_run('qini_curves', 'historical') }}
+    {% endif %}
 )
 select
     *,

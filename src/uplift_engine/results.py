@@ -15,8 +15,6 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from uplift_engine.release import stage_runs
-
 
 def _records(df: pd.DataFrame) -> list[dict]:
     clean = df.drop(columns=[c for c in ("run_id", "meta") if c in df.columns])
@@ -27,11 +25,15 @@ def _table(con, table: str, run_id: str) -> pd.DataFrame:
     return con.execute(f"SELECT * FROM {table} WHERE run_id = ?", [run_id]).df()
 
 
-def build_results(con: duckdb.DuckDBPyConnection, release_id: str) -> dict:
-    runs = {
-        s: r["run_id"] for s, r in stage_runs(con, release_id).items() if r["status"] == "succeeded"
-    }
-    a, d, h, e = runs["assess"], runs["deploy"], runs["historical"], runs["explain"]
+def build_results(
+    con: duckdb.DuckDBPyConnection,
+    release_id: str,
+    runs: dict[str, str],
+    historical_reason: str | None = None,
+) -> dict:
+    """Results from exactly `runs` ({stage: run_id}); historical is optional."""
+    a, d, e = runs["assess"], runs["deploy"], runs["explain"]
+    h = runs.get("historical")
 
     pol = _table(con, "ml.policy", d).iloc[0]
     folds = _table(con, "ml.assessment_folds", a)
@@ -41,10 +43,6 @@ def build_results(con: duckdb.DuckDBPyConnection, release_id: str) -> dict:
     ameta = json.loads(_table(con, "ml.assessment_policies", a).meta.iloc[0])
     fid = _table(con, "ml.surrogate_fidelity", e)
     exact = _table(con, "ml.shap_exact_check", e)
-    hist_meta = _table(con, "ml.historical_test", h)
-    access = con.execute(
-        "SELECT accessed_at, champion, reason FROM meta.test_access_log ORDER BY accessed_at"
-    ).df()
 
     return {
         "release_id": release_id,
@@ -98,15 +96,7 @@ def build_results(con: duckdb.DuckDBPyConnection, release_id: str) -> dict:
             "fold_spread_note": "folds share training customers; their spread is descriptive, "
             "not independent replications",
         },
-        "historical_test": {
-            "source": hist_meta.source.iloc[0],
-            "models": _records(hist_meta.drop(columns=["source"])),
-            "policies": _records(_table(con, "ml.historical_policies", h).drop(columns=["source"])),
-            "differences": _records(
-                _table(con, "ml.historical_differences", h).drop(columns=["source"])
-            ),
-            "access_log": json.loads(access.to_json(orient="records", date_format="iso")),
-        },
+        "historical_test": _historical(con, h, historical_reason),
         "deployment_projection": {
             "status": pol.projection_basis,
             "champion": pol.champion,
@@ -146,8 +136,34 @@ def build_results(con: duckdb.DuckDBPyConnection, release_id: str) -> dict:
     }
 
 
-def write_results(con, release_id: str, path: Path) -> dict:
-    res = build_results(con, release_id)
+def _historical(con, run_id: str | None, reason: str | None) -> dict:
+    if run_id is None:
+        return {
+            "available": False,
+            "reason": reason or "the historical comparison was not run for this release",
+        }
+    hist = _table(con, "ml.historical_test", run_id)
+    access = con.execute(
+        "SELECT accessed_at, champion, reason FROM meta.test_access_log ORDER BY accessed_at"
+    ).df()
+    return {
+        "available": True,
+        "source": hist.source.iloc[0],
+        "models": _records(hist.drop(columns=["source"])),
+        "policies": _records(
+            _table(con, "ml.historical_policies", run_id).drop(columns=["source"])
+        ),
+        "differences": _records(
+            _table(con, "ml.historical_differences", run_id).drop(columns=["source"])
+        ),
+        "access_log": json.loads(access.to_json(orient="records", date_format="iso")),
+    }
+
+
+def write_results(
+    con, release_id: str, runs: dict[str, str], path: Path, historical_reason: str | None = None
+) -> dict:
+    res = build_results(con, release_id, runs, historical_reason)
     path.write_text(json.dumps(res, indent=2, default=_default) + "\n")
     return res
 

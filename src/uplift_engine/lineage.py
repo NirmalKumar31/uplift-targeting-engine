@@ -1,8 +1,24 @@
-"""Run lineage: what code, configuration, data and features produced a result.
+"""Run lineage: what code, environment, configuration, data and features produced a result.
 
-Every pipeline run records a row in `meta.runs` with the git commit and dirty flag (when git is
-available) *and* a content fingerprint of the source tree, so lineage never degrades to "unknown".
-Fingerprints are SHA-256 hex digests.
+Every pipeline run records a row in `meta.runs`:
+
+* `source_fp` - the **computational code fingerprint**: SHA-256 over the files that can change a
+  result (`COMPUTE_GLOBS`: package code, dbt models/macros/project, configs, uv.lock). Its per-file
+  payload is stored in `meta.fingerprint_payloads`, so two fingerprints can be compared file by
+  file. Dashboard, docs, tests and scripts are consumers and are deliberately excluded.
+* `env_fp` - Python and key package versions plus the uv.lock hash (payload stored likewise).
+* `config_hash`, `dataset_fp` (verified raw hashes of the latest ingest), `feature_build_id`.
+* `parent_run_ids` - the exact runs whose outputs this run consumed.
+* git commit and dirty flag when git is available (informational; never the only identity).
+
+Compatibility policy (enforced in release.validate): every run in a release must share one
+source_fp, env_fp, config_hash, dataset_fp and feature build. Any code or environment change means
+rebuilding the release.
+
+Feature builds (`meta.feature_build`) are recorded as `building` *before* dbt touches the
+workspace and marked `succeeded` only after the build and its tests pass; modelling stages call
+`require_fresh_features`, which refuses unless the latest build succeeded and still matches the
+current cutoff, feature SQL, raw ingest and feature-table schema.
 """
 
 from __future__ import annotations
@@ -20,26 +36,36 @@ import duckdb
 
 from uplift_engine.config import Config
 
-SOURCE_GLOBS = (
-    "src/**/*.py",
+COMPUTE_GLOBS = (
+    "src/uplift_engine/**/*.py",
     "dbt/models/**/*",
     "dbt/macros/**/*",
     "dbt/dbt_project.yml",
     "configs/**/*",
-    "pyproject.toml",
     "uv.lock",
 )
 FEATURE_GLOBS = (
+    "dbt/models/sources.yml",
     "dbt/models/staging/**/*",
     "dbt/models/features/**/*",
     "dbt/macros/**/*",
     "dbt/dbt_project.yml",
 )
-PACKAGES = ("numpy", "pandas", "scikit-learn", "lightgbm", "duckdb", "dbt-duckdb", "plotly")
+PACKAGES = (
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "lightgbm",
+    "duckdb",
+    "dbt-duckdb",
+    "pyarrow",
+)
+LINEAGE_FIELDS = ("source_fp", "env_fp", "config_hash", "dataset_fp", "feature_build_id")
 
 
 class LineageMismatchError(RuntimeError):
-    """Artifacts, data or configuration come from different generations."""
+    """Artifacts, data, features or configuration come from different generations."""
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -54,14 +80,17 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def tree_fingerprint(root: Path, globs) -> str:
-    h = hashlib.sha256()
+def tree_manifest(root: Path, globs) -> dict[str, str]:
     files = sorted({p for g in globs for p in root.glob(g) if p.is_file()})
-    for p in files:
-        h.update(p.relative_to(root).as_posix().encode())
-        h.update(b"\0")
-        h.update(p.read_bytes())
-    return h.hexdigest()
+    return {p.relative_to(root).as_posix(): sha256_file(p) for p in files}
+
+
+def _digest(payload) -> str:
+    return sha256_bytes(json.dumps(payload, sort_keys=True).encode())
+
+
+def tree_fingerprint(root: Path, globs) -> str:
+    return _digest(tree_manifest(root, globs))
 
 
 def git_state(root: Path) -> dict:
@@ -75,39 +104,41 @@ def git_state(root: Path) -> dict:
 
 
 def config_hash(cfg: Config) -> str:
-    return sha256_bytes(json.dumps(cfg.fingerprint_payload(), sort_keys=True).encode())
+    return _digest(cfg.fingerprint_payload())
 
 
-def environment() -> dict:
+def environment(root: Path | None = None) -> dict:
     versions = {}
     for pkg in PACKAGES:
         try:
             versions[pkg] = metadata.version(pkg)
         except metadata.PackageNotFoundError:
             versions[pkg] = None
-    return {"python": platform.python_version(), "packages": versions}
-
-
-def environment_fingerprint(root: Path) -> str:
-    lock = root / "uv.lock"
-    payload = {"env": environment(), "uv_lock": sha256_file(lock) if lock.exists() else None}
-    return sha256_bytes(json.dumps(payload, sort_keys=True).encode())
+    lock = (root / "uv.lock") if root else None
+    return {
+        "python": platform.python_version(),
+        "packages": versions,
+        "uv_lock": sha256_file(lock) if lock and lock.exists() else None,
+    }
 
 
 def feature_code_fingerprint(root: Path, as_of) -> str:
-    return sha256_bytes((tree_fingerprint(root, FEATURE_GLOBS) + str(as_of)).encode())
+    return _digest({"files": tree_manifest(root, FEATURE_GLOBS), "as_of": str(as_of)})
 
 
 def dataset_fingerprint(con: duckdb.DuckDBPyConnection) -> str:
     """Digest of the verified raw-file hashes of the most recent ingest."""
-    rows = con.execute(
-        "SELECT table_name, actual_sha256 FROM meta.ingest_log "
-        "WHERE ingest_id = (SELECT ingest_id FROM meta.ingest_log ORDER BY loaded_at DESC LIMIT 1) "
-        "ORDER BY table_name"
-    ).fetchall()
+    try:
+        rows = con.execute(
+            "SELECT table_name, actual_sha256 FROM meta.ingest_log WHERE ingest_id = "
+            "(SELECT ingest_id FROM meta.ingest_log WHERE ingest_id IS NOT NULL "
+            "ORDER BY loaded_at DESC LIMIT 1) ORDER BY table_name"
+        ).fetchall()
+    except duckdb.CatalogException:
+        rows = []
     if not rows:
         raise LineageMismatchError("no verified ingest recorded; run `ute ingest`")
-    return sha256_bytes(json.dumps(rows).encode())
+    return _digest(rows)
 
 
 def feature_schema_fingerprint(con: duckdb.DuckDBPyConnection) -> str:
@@ -118,19 +149,7 @@ def feature_schema_fingerprint(con: duckdb.DuckDBPyConnection) -> str:
     ).fetchall()
     if not cols:
         raise LineageMismatchError("features.client_features is missing; run `ute transform`")
-    return sha256_bytes(json.dumps(cols).encode())
-
-
-def current_feature_build(con: duckdb.DuckDBPyConnection) -> dict:
-    row = con.execute(
-        "SELECT build_id, dataset_fp, feature_code_fp, schema_fp, as_of FROM meta.feature_build "
-        "ORDER BY built_at DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
-        raise LineageMismatchError("no feature build recorded; run `ute transform`")
-    return dict(
-        zip(["build_id", "dataset_fp", "feature_code_fp", "schema_fp", "as_of"], row, strict=True)
-    )
+    return _digest(cols)
 
 
 def ensure_meta(con: duckdb.DuckDBPyConnection) -> None:
@@ -150,8 +169,98 @@ def ensure_meta(con: duckdb.DuckDBPyConnection) -> None:
         "CREATE TABLE IF NOT EXISTS meta.feature_build (build_id VARCHAR, built_at TIMESTAMPTZ, "
         "dataset_fp VARCHAR, feature_code_fp VARCHAR, schema_fp VARCHAR, as_of TIMESTAMP)"
     )
+    con.execute("ALTER TABLE meta.feature_build ADD COLUMN IF NOT EXISTS status VARCHAR")
+    con.execute("ALTER TABLE meta.feature_build ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS meta.fingerprint_payloads (fingerprint VARCHAR PRIMARY KEY, "
+        "kind VARCHAR, payload JSON, recorded_at TIMESTAMPTZ)"
+    )
 
 
+def _store_payload(con, kind: str, payload) -> str:
+    fp = _digest(payload)
+    con.execute(
+        "INSERT OR IGNORE INTO meta.fingerprint_payloads VALUES (?, ?, ?, ?)",
+        [fp, kind, json.dumps(payload, sort_keys=True), datetime.now(UTC)],
+    )
+    return fp
+
+
+def code_fingerprint(con, root: Path) -> str:
+    return _store_payload(con, "code", tree_manifest(root, COMPUTE_GLOBS))
+
+
+def environment_fingerprint(con, root: Path) -> str:
+    return _store_payload(con, "environment", environment(root))
+
+
+# --------------------------------------------------------------------------- feature builds
+def begin_feature_build(con, cfg: Config) -> str:
+    """Record a build as `building` before dbt runs: from now until `finish_feature_build`
+    succeeds, no modelling stage will accept the workspace."""
+    ensure_meta(con)
+    build_id = f"features-{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+    con.execute(
+        "INSERT INTO meta.feature_build (build_id, built_at, dataset_fp, feature_code_fp, "
+        "schema_fp, as_of, status) VALUES (?, ?, ?, ?, NULL, ?, 'building')",
+        [
+            build_id,
+            datetime.now(UTC),
+            dataset_fingerprint(con),
+            feature_code_fingerprint(cfg.root, cfg.dataset.as_of),
+            cfg.dataset.as_of,
+        ],
+    )
+    return build_id
+
+
+def finish_feature_build(con, build_id: str, ok: bool) -> None:
+    schema = feature_schema_fingerprint(con) if ok else None
+    con.execute(
+        "UPDATE meta.feature_build SET status = ?, schema_fp = ?, finished_at = ? "
+        "WHERE build_id = ?",
+        ["succeeded" if ok else "failed", schema, datetime.now(UTC), build_id],
+    )
+
+
+def require_fresh_features(con, cfg: Config) -> dict:
+    """The latest feature build, if and only if it is complete and current."""
+    ensure_meta(con)
+    row = con.execute(
+        "SELECT build_id, dataset_fp, feature_code_fp, schema_fp, as_of, status "
+        "FROM meta.feature_build ORDER BY built_at DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        raise LineageMismatchError("no feature build recorded; run `ute transform`")
+    build = dict(
+        zip(
+            ["build_id", "dataset_fp", "feature_code_fp", "schema_fp", "as_of", "status"],
+            row,
+            strict=True,
+        )
+    )
+    problems = []
+    if build["status"] != "succeeded":
+        problems.append(
+            f"latest feature build {build['build_id']} is "
+            f"{build['status'] or 'of an unverified legacy format'}"
+        )
+    if build["as_of"] != cfg.dataset.as_of.replace(tzinfo=None):
+        problems.append(f"built for as_of {build['as_of']}, config says {cfg.dataset.as_of}")
+    if build["feature_code_fp"] != feature_code_fingerprint(cfg.root, cfg.dataset.as_of):
+        problems.append("feature SQL/macros changed since the build")
+    if build["dataset_fp"] != dataset_fingerprint(con):
+        problems.append("raw data were re-ingested since the build")
+    if build["schema_fp"] != feature_schema_fingerprint(con):
+        problems.append("features.client_features no longer matches the build's schema")
+    if problems:
+        raise LineageMismatchError(
+            "stale or incomplete feature build: " + "; ".join(problems) + ". Run `ute transform`."
+        )
+    return build
+
+
+# --------------------------------------------------------------------------- runs
 class Run:
     """Records one pipeline stage in meta.runs (status running -> succeeded/failed)."""
 
@@ -165,22 +274,22 @@ class Run:
         needs_features: bool = True,
     ):
         self.con, self.cfg, self.stage = con, cfg, stage
-        self.release_id, self.parents = release_id, parents or []
-        self.run_id = f"{stage}-{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+        self.release_id, self.parents = release_id, list(parents or [])
+        self.run_id = f"{stage}-{datetime.now(UTC):%Y%m%dT%H%M%S%f}-{uuid.uuid4().hex[:6]}"
         self.details: dict = {}
         self.needs_features = needs_features
 
     def __enter__(self) -> Run:
         ensure_meta(self.con)
         root = self.cfg.root
-        build = current_feature_build(self.con) if self.needs_features else {}
+        build = require_fresh_features(self.con, self.cfg) if self.needs_features else {}
         self.lineage = {
             **git_state(root),
-            "source_fp": tree_fingerprint(root, SOURCE_GLOBS),
+            "source_fp": code_fingerprint(self.con, root),
             "config_hash": config_hash(self.cfg),
             "dataset_fp": build.get("dataset_fp"),
             "feature_build_id": build.get("build_id"),
-            "env_fp": environment_fingerprint(root),
+            "env_fp": environment_fingerprint(self.con, root),
         }
         self.con.execute(
             "INSERT INTO meta.runs VALUES (?, ?, ?, ?, NULL, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, "
@@ -208,8 +317,15 @@ class Run:
         if exc_type:
             self.details["error"] = f"{exc_type.__name__}: {exc}"
         self.con.execute(
-            "UPDATE meta.runs SET finished_at = ?, status = ?, details = ? WHERE run_id = ?",
-            [datetime.now(UTC), status, json.dumps(self.details, default=str), self.run_id],
+            "UPDATE meta.runs SET finished_at = ?, status = ?, details = ?, parent_run_ids = ? "
+            "WHERE run_id = ?",
+            [
+                datetime.now(UTC),
+                status,
+                json.dumps(self.details, default=str),
+                json.dumps(self.parents),
+                self.run_id,
+            ],
         )
 
     @property
@@ -221,5 +337,5 @@ class Run:
             **self.lineage,
             "seed": self.cfg.experiment.seed,
             "parents": self.parents,
-            "environment": environment(),
+            "environment": environment(self.cfg.root),
         }

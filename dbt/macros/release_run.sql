@@ -1,9 +1,7 @@
-{# run_id of the latest successful run of `stage` in the release being built (var release_id). #}
+{# Marts read exactly the producer runs that `ute marts` passes as vars (<stage>_run), the same
+   ids recorded in PRODUCERS.json and in the marts run's parent_run_ids. #}
 {% macro release_run(stage) -%}
-    (select run_id from {{ source('meta', 'runs') }}
-     where release_id = '{{ var("release_id") }}' and stage = '{{ stage }}'
-       and status = 'succeeded'
-     order by started_at desc limit 1)
+    '{{ var(stage ~ "_run") }}'
 {%- endmacro %}
 
 {% macro from_run(table, stage) -%}

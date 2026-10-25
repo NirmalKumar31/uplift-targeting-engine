@@ -36,7 +36,7 @@ from uplift_engine.config import UPLIFT_LEARNERS, Config
 from uplift_engine.contract import FeatureContract
 from uplift_engine.data import cv_folds, load_experiment, load_features
 from uplift_engine.evaluation import metrics as m
-from uplift_engine.lineage import LineageMismatchError, Run, current_feature_build, sha256_file
+from uplift_engine.lineage import LineageMismatchError, Run, require_fresh_features, sha256_file
 from uplift_engine.models.learners import UpliftCalibrator, build_learner
 from uplift_engine.monitoring import balance_table, psi_table
 from uplift_engine.policy import (
@@ -50,7 +50,7 @@ from uplift_engine.policy import (
     select_top,
     sensitivity,
 )
-from uplift_engine.release import building_release, release_dir
+from uplift_engine.release import building_release, latest_runs, release_dir
 from uplift_engine.warehouse import append_run
 
 DEPTH_KS = (0.1, 0.2, 0.3, 0.5)
@@ -351,6 +351,7 @@ def assess(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> dict:
                 "response": resp_all,
                 "treatment": t,
                 "target": y,
+                "producer_run_id": run.run_id,
             }
         ).to_parquet(release_dir(cfg, release_id) / "assessment_predictions.parquet")
         run.details = {
@@ -398,7 +399,7 @@ def deploy(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.DataFra
     rdir = release_dir(cfg, release_id)
     with Run(con, cfg, "deploy", release_id) as run:
         margin = margin_per_purchase(econ, con)
-        build = current_feature_build(con)
+        build = require_fresh_features(con, cfg)
         experiment = load_experiment(con)
         X_all = load_features(con)
         contract = FeatureContract.from_training(X_all)
@@ -482,6 +483,8 @@ def deploy(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.DataFra
             scores.client_id, eligible, camp.campaign_id, camp.holdout_share, policy_version
         )
         scores = scores.merge(campaign[["client_id", "action"]], on="client_id")
+        scores["producer_run_id"] = run.run_id
+        campaign["producer_run_id"] = run.run_id
         scores.to_parquet(rdir / "scores.parquet")
         campaign.to_parquet(rdir / "campaign_assignment.parquet")
 
@@ -576,6 +579,28 @@ def deploy(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.DataFra
 
 
 # --------------------------------------------------------------------------- historical
+def historical_available(cfg: Config) -> tuple[bool, str]:
+    """Whether the frozen historical evidence exists locally and matches its committed manifest.
+
+    It is optional: a release without it is complete, and shows historical evidence as
+    unavailable. Checked before any expensive stage runs.
+    """
+    snap, mpath = cfg.paths.historical_snapshot, cfg.paths.historical_manifest
+    path = snap / "historical_test_scores.parquet"
+    if not mpath.exists():
+        return False, f"manifest {mpath} not found"
+    if not path.exists():
+        return False, (
+            f"frozen historical scores {path} are not present (they live in a local, "
+            "gitignored evidence snapshot)"
+        )
+    manifest = json.loads(mpath.read_text())
+    entry = manifest.get("files", {}).get("historical_test_scores.parquet", {})
+    if sha256_file(path) != entry.get("sha256"):
+        return False, f"{path} does not match the committed manifest"
+    return True, "frozen historical scores verified against the committed manifest"
+
+
 def historical(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.DataFrame:
     """Corrected intervals for the 2026-10-24 bundle on the reused test split.
 
@@ -652,11 +677,21 @@ def load_release_bundle(cfg: Config, con, release_id: str) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"{path} missing; run `ute deploy` for release {release_id}")
     bundle = joblib.load(path)
-    build = current_feature_build(con)
+    build = require_fresh_features(con, cfg)
     if bundle["feature_build_id"] != build["build_id"]:
         raise LineageMismatchError(
             f"bundle was trained on feature build {bundle['feature_build_id']}, but the "
             f"warehouse now holds {build['build_id']}; rerun `ute deploy`"
+        )
+    deploy = latest_runs(con, release_id).get("deploy")
+    if (
+        deploy is None
+        or deploy["status"] != "succeeded"
+        or bundle.get("deploy_run_id") != deploy["run_id"]
+    ):
+        raise LineageMismatchError(
+            f"bundle.joblib was produced by {bundle.get('deploy_run_id')}, which is not the "
+            f"release's latest successful deploy run; rerun `ute deploy`"
         )
     return bundle
 
@@ -674,8 +709,8 @@ def explain(
     """
     release_id = building_release(cfg, con)
     seed = cfg.experiment.seed
-    with Run(con, cfg, "explain", release_id) as run:
-        bundle = load_release_bundle(cfg, con, release_id)
+    bundle = load_release_bundle(cfg, con, release_id)
+    with Run(con, cfg, "explain", release_id, parents=[bundle["deploy_run_id"]]) as run:
         X_all = load_features(con)
         sample = X_all.sample(min(n_rows, len(X_all)), random_state=seed)
         target = bundle["learner"].predict(sample)

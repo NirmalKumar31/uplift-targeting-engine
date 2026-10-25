@@ -137,8 +137,12 @@ class Config(BaseModel):
 
 
 def load_config(path: Path | None = None, root: Path | None = None) -> Config:
+    """Load the pipeline config: `path`, else `$UTE_CONFIG`, else <project root>/configs/...
+
+    API and dashboard call this with no arguments, so `UTE_CONFIG` points both consumers at the
+    same project (and so the same `releases/ACTIVE`)."""
     root = root or project_root()
-    path = path or root / CONFIG_REL
+    path = path or os.environ.get("UTE_CONFIG") or root / CONFIG_REL
     cfg = Config.model_validate(yaml.safe_load(Path(path).read_text()))
     cfg.paths = cfg.paths.resolve(root)
     cfg.root = root

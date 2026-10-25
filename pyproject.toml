@@ -50,6 +50,10 @@ ignore = ["RUF001", "RUF002", "RUF003", "C408"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["tests"]
+markers = [
+    "integration: end-to-end runs on the raw fixture (dbt, models, API); ~minutes",
+]
 
 [tool.coverage.run]
 source = ["uplift_engine"]

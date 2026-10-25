@@ -126,15 +126,21 @@ class XLearner(UpliftLearner):
 class ClassTransformation(UpliftLearner):
     """Jaskowski & Jaroszewicz (2012): z = 1 if (SMS and bought) or (no SMS and didn't).
 
-    With a 50/50 split, uplift = 2 P(z=1 | x) - 1.
+    uplift = 2 P(z=1 | x) - 1 holds when treatment is 50/50. Arms are reweighted to equal total
+    weight (w = 0.5 / e for treated, 0.5 / (1 - e) for control), which restores that condition for
+    any treated share e in (0, 1).
     """
 
     name = "class_transformation"
 
     def fit(self, X, t, y):
         t, y = np.asarray(t), np.asarray(y)
+        e = t.mean()
+        if not 0 < e < 1:
+            raise ValueError("class transformation needs both treatment arms")
         z = (y * t + (1 - y) * (1 - t)).astype(int)
-        self.model_ = _clf(self.params, self.seed).fit(X, z)
+        w = np.where(t == 1, 0.5 / e, 0.5 / (1 - e))
+        self.model_ = _clf(self.params, self.seed).fit(X, z, sample_weight=w)
         return self
 
     def predict(self, X):
@@ -212,6 +218,8 @@ class UpliftCalibrator:
     """
 
     def __init__(self, n_bins: int = 20):
+        if n_bins < 2:
+            raise ValueError("n_bins must be >= 2")
         self.n_bins = n_bins
 
     def fit(self, score: np.ndarray, t: np.ndarray, y: np.ndarray) -> UpliftCalibrator:

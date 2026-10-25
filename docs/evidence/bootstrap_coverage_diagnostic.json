@@ -1,0 +1,38 @@
+{
+  "heterogeneous_effect": {
+    "n_experiments": 200,
+    "n_per_experiment": 4000,
+    "n_boot": 300,
+    "nominal": 0.95,
+    "true_ate": 0.02998919741797611,
+    "true_policy_value_per_1000": 629.9513599381271,
+    "ate": {
+      "coverage": 0.97,
+      "monte_carlo_se": 0.012062338081814825
+    },
+    "policy_value": {
+      "coverage": 0.965,
+      "monte_carlo_se": 0.012995191418367032
+    },
+    "mean_ate_interval_width": 0.060209086044262804,
+    "seed": 1
+  },
+  "null_effect": {
+    "n_experiments": 200,
+    "n_per_experiment": 4000,
+    "n_boot": 300,
+    "nominal": 0.95,
+    "true_ate": 0.0,
+    "true_policy_value_per_1000": -903.99,
+    "ate": {
+      "coverage": 0.96,
+      "monte_carlo_se": 0.013856406460551024
+    },
+    "policy_value": {
+      "coverage": 0.945,
+      "monte_carlo_se": 0.016120638945153514
+    },
+    "mean_ate_interval_width": 0.059848550935756,
+    "seed": 2
+  }
+}

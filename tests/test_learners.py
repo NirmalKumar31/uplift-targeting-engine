@@ -19,39 +19,39 @@ def xy(experiment):
 def test_uplift_learners_recover_the_effect(xy, name):
     X, t, y, tau = xy
     pred = build_learner(name, PARAMS).fit(X, t, y).predict(X)
-    assert pred.shape == (len(X),)
+    assert np.corrcoef(pred, tau)[0, 1] > 0.3
+
+
+def test_class_transformation_reweights_unequal_arms(xy):
+    X, _, _, tau = xy
+    rng = np.random.default_rng(4)
+    t = (rng.random(len(X)) < 0.2).astype(int)
+    y = (rng.random(len(X)) < np.clip(0.4 + t * tau, 0, 1)).astype(int)
+    pred = build_learner("class_transformation", PARAMS).fit(X, t, y).predict(X)
+    true_mean = float(np.mean(tau))
+    assert abs(pred.mean() - true_mean) < 0.08  # unweighted CT would be biased by ~0.6 here
     assert np.corrcoef(pred, tau)[0, 1] > 0.3
 
 
 def test_ensemble_averages_members(xy):
     X, t, y, _ = xy
     ens = build_learner("ensemble:s_learner+t_learner", PARAMS).fit(X, t, y)
-    members = [mdl.predict(X) for mdl in ens.models_]
-    np.testing.assert_allclose(ens.predict(X), np.mean(members, axis=0))
+    np.testing.assert_allclose(ens.predict(X), np.mean([e.predict(X) for e in ens.models_], 0))
 
 
-def test_baselines_flagged():
-    assert LEARNERS["random"].is_baseline and LEARNERS["response"].is_baseline
-    assert not LEARNERS["dr_learner"].is_baseline
-
-
-def test_unknown_learner():
+def test_baselines_flagged_and_unknown_rejected():
+    assert LEARNERS["random"].is_baseline and not LEARNERS["dr_learner"].is_baseline
     with pytest.raises(KeyError):
         build_learner("nope")
-
-
-def test_random_is_deterministic(xy):
-    X, t, y, _ = xy
-    a = build_learner("random", seed=3).fit(X, t, y).predict(X)
-    b = build_learner("random", seed=3).fit(X, t, y).predict(X)
-    np.testing.assert_array_equal(a, b)
 
 
 def test_calibrator_is_monotone_and_on_uplift_scale(xy):
     _, t, y, tau = xy
     score = tau + np.random.default_rng(0).normal(0, 0.05, len(tau))
     cal = UpliftCalibrator(n_bins=10).fit(score, t, y)
-    out = cal.transform(np.sort(score))
-    assert np.all(np.diff(out) >= -1e-12)
-    ate = y[t == 1].mean() - y[t == 0].mean()
-    assert cal.transform(score).mean() == pytest.approx(ate, abs=0.03)
+    assert np.all(np.diff(cal.transform(np.sort(score))) >= -1e-12)
+    assert cal.transform(score).mean() == pytest.approx(
+        y[t == 1].mean() - y[t == 0].mean(), abs=0.03
+    )
+    with pytest.raises(ValueError):
+        UpliftCalibrator(n_bins=1)

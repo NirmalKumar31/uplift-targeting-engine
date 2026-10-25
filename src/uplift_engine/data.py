@@ -11,13 +11,14 @@ CATEGORICAL = ["gender"]
 
 
 def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Model-ready matrix: client_id as index, booleans as 0/1, categoricals as pandas category."""
+    """Model-ready matrix: client_id as index, categoricals with fixed levels, all else float.
+
+    Serving builds the identical frame through `contract.to_model_frame`.
+    """
     X = df.set_index("client_id") if "client_id" in df.columns else df.copy()
     for col in X.columns:
         if col in CATEGORICAL:
             X[col] = pd.Categorical(X[col], categories=["F", "M", "U"])
-        elif X[col].dtype == bool:
-            X[col] = X[col].astype(int)
         else:
             X[col] = X[col].astype(float)
     return X

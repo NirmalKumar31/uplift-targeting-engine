@@ -1,16 +1,15 @@
-"""Synthetic fixtures: a randomised experiment with a known, heterogeneous treatment effect."""
+"""Shared fixtures: an in-memory experiment with a known effect, and a fixture project config."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 import numpy as np
 import pandas as pd
 import pytest
 import yaml
 
-from uplift_engine.config import load_config
+REPO = Path(__file__).resolve().parents[1]
 
 
 def synthetic_experiment(n: int = 4000, seed: int = 0) -> pd.DataFrame:
@@ -40,42 +39,25 @@ def experiment() -> pd.DataFrame:
     return synthetic_experiment()
 
 
-@pytest.fixture
-def cfg(tmp_path: Path):
-    """A fast config pointing at a temporary warehouse seeded with synthetic dbt outputs."""
-    raw = yaml.safe_load((Path(__file__).parents[1] / "configs" / "pipeline.yaml").read_text())
+def write_fixture_config(tmp: Path, files: dict[str, str], **overrides) -> Path:
+    """A fast pipeline config whose data/output paths all live under `tmp`."""
+    raw = yaml.safe_load((REPO / "configs" / "pipeline.yaml").read_text())
     raw["paths"] = {
-        "raw_dir": "raw",
-        "warehouse": "wh.duckdb",
-        "artifacts_dir": "artifacts",
-        "marts_dir": "marts",
+        "raw_dir": str(tmp / "raw"),
+        "warehouse": str(tmp / "wh.duckdb"),
+        "releases_dir": str(tmp / "releases"),
+        "marts_dir": str(tmp / "marts"),
+        "historical_snapshot": str(tmp / "snapshot"),
+        "historical_manifest": str(tmp / "snapshot_manifest.json"),
     }
-    raw["experiment"].update(n_folds=2, n_bootstrap=20)
-    raw["models"]["lightgbm"].update(n_estimators=30, min_child_samples=20)
-    raw["models"]["candidates"] = [
-        "random",
-        "response",
-        "s_learner",
-        "t_learner",
-        "class_transformation",
-    ]
+    raw["dataset"]["files"] = files
+    raw["dataset"]["base_url"] = "file:///nonexistent"  # fixtures never download
+    raw["experiment"].update(n_folds=2, outer_folds=2, n_bootstrap=30, noise_rankings=20)
+    raw["models"]["lightgbm"].update(n_estimators=25, min_child_samples=20)
     raw["models"]["ensemble_top_k"] = 2
-    path = tmp_path / "pipeline.yaml"
+    for key, value in overrides.items():
+        section, field = key.split("__")
+        raw[section][field] = value
+    path = tmp / "pipeline.yaml"
     path.write_text(yaml.safe_dump(raw))
-    config = load_config(path, root=tmp_path)
-
-    exp = synthetic_experiment(3000, seed=1)
-    unlabelled = synthetic_experiment(1000, seed=2).assign(
-        client_id=lambda d: "u" + d.client_id.str[1:]
-    )
-    con = duckdb.connect(str(config.paths.warehouse))
-    features = pd.concat([exp, unlabelled]).drop(columns=["treatment", "target", "true_uplift"])
-    for schema in ("features", "staging"):
-        con.execute(f"CREATE SCHEMA {schema}")
-    con.register("f", features)
-    con.execute("CREATE TABLE features.client_features AS SELECT * FROM f")
-    con.register("e", exp[["client_id", "treatment", "target"]])
-    con.execute("CREATE TABLE staging.stg_experiment AS SELECT * FROM e")
-    con.execute("CREATE TABLE staging.stg_transactions AS SELECT 400.0 AS purchase_sum")
-    con.close()
-    return config
+    return path

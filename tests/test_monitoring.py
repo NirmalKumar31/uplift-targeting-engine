@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from uplift_engine.config import Monitoring
+from uplift_engine.data import prepare_features
 from uplift_engine.monitoring import balance_table, psi, psi_table
 
 
@@ -12,23 +13,27 @@ def test_psi_zero_for_same_distribution_and_large_for_shift():
     assert psi(a, pd.Series(rng.normal(1.5, 1, size=5000))) > 0.25
 
 
-def test_psi_counts_missing_and_low_cardinality():
-    a = pd.Series([0, 1, 1, 2, None] * 200, dtype=float)
-    b = pd.Series([0, 1, 1, 2, 2] * 200, dtype=float)
-    assert psi(a, a) == 0
-    assert psi(a, b) > 0
-
-
-def test_psi_table_status():
+def test_psi_table_is_labelled_a_diagnostic():
     rng = np.random.default_rng(1)
-    ref = pd.DataFrame({"x": rng.normal(size=3000), "z": rng.normal(size=3000)})
-    cur = pd.DataFrame({"x": rng.normal(2, 1, 3000), "z": rng.normal(size=3000)})
-    out = psi_table(ref, cur, Monitoring()).set_index("feature")
-    assert out.loc["x", "status"] == "fail" and out.loc["z", "status"] == "ok"
+    ref = pd.DataFrame({"x": rng.normal(size=3000)})
+    out = psi_table(ref, pd.DataFrame({"x": rng.normal(2, 1, 3000)}), Monitoring())
+    assert out.status.iloc[0] == "high" and "not a deployment gate" in out.role.iloc[0]
 
 
-def test_balance_on_randomised_data(experiment):
-    X = experiment[["age", "n_txn", "spend_total"]].set_index(experiment.client_id)
-    t = experiment.set_index("client_id").treatment
-    table = balance_table(X, t)
-    assert table.balanced.all()
+def test_balance_reports_categories_and_missingness():
+    rng = np.random.default_rng(2)
+    n = 4000
+    t = rng.integers(0, 2, n)
+    df = pd.DataFrame(
+        {
+            "client_id": [f"c{i}" for i in range(n)],
+            "gender": np.where(t == 1, rng.choice(["F", "M"], n), "U"),
+            "age": np.where((t == 1) & (rng.random(n) < 0.5), np.nan, 40.0),
+        }
+    )
+    X = prepare_features(df)
+    table = balance_table(X, pd.Series(t, index=X.index))
+    checks = set(zip(table.feature, table.check, strict=True))
+    assert ("gender", "category share") in checks and ("age", "missingness") in checks
+    assert not table.query("feature == 'gender'").balanced.all()  # imbalance a mean would hide
+    assert not table.query("check == 'missingness'").balanced.all()

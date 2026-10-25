@@ -183,6 +183,21 @@
     "tables/ml.test_results.parquet": {
       "sha256": "d402be47c6d7917dab64052855f98d2981761ad842b9c1ccf89081b36f2d06ca",
       "bytes": 4541
+    },
+    "historical_test_scores.parquet": {
+      "sha256": "834331bf0ad4d34620f4733559bc3ad4100bb8e37391f70757e75e2d9fc88d0b",
+      "bytes": 1679923
     }
+  },
+  "historical_test_scores": {
+    "created_at": "2026-10-25T18:54:01.686078+00:00",
+    "reason": "A1 remediation: freeze per-customer scores of the already-selected 2026-10-24 bundle to recompute intervals with the corrected bootstrap; no selection",
+    "champion": "s_learner",
+    "dev_chosen_depth": 0.41,
+    "margin": 105.31967266044524,
+    "n_test": 40008,
+    "sha256": "834331bf0ad4d34620f4733559bc3ad4100bb8e37391f70757e75e2d9fc88d0b",
+    "dev_oof_rows": 160031,
+    "note": "features = pre-remediation definitions (warehouse as of commit 0033e24)"
   }
 }

@@ -112,18 +112,24 @@ flowchart LR
 
 ```bash
 uv sync --locked --all-extras            # CPython 3.12, uv 0.13.x
-uv run ute run                           # ingest -> transform -> assess -> deploy -> historical
+uv run ute run                           # ingest -> transform -> assess -> deploy -> [historical]
                                          #   -> explain -> marts -> release (~1 h on a laptop)
+uv run ute status                        # active release; repairs derived copies if needed
 uv run streamlit run dashboard/app.py    # dashboard on the active release
 uv run uvicorn uplift_engine.api:app     # API on the active release (/docs)
 uv run ute export-send-list send.csv     # action == send only; holdout never included
 ```
 
-The active release's marts are committed in `data/marts/`, so the dashboard runs right after
-`uv sync`. The API needs a generated release (`releases/`, gitignored): without one it is alive
-(`/health`) but not ready (`/ready` → 503). `ute historical` needs the local evidence snapshot
-(`snapshots/`, gitignored, verified against its committed manifest); on a fresh clone without it,
-that stage fails clearly and a release cannot be activated.
+`releases/ACTIVE` names the active release. The API and the dashboard both read that immutable
+release directory, so they always serve the same release and switch together when the pointer is
+atomically replaced. `data/marts/` is a committed *copy* of the active release's marts, so the
+dashboard works straight after `uv sync`. The API needs a generated release (`releases/`,
+gitignored): without one it is alive (`/health`) but not ready (`/ready` → 503).
+
+The historical comparison is optional. It needs the local, gitignored evidence snapshot,
+verified against its committed manifest. `ute run` checks for it before any expensive stage. On a
+fresh clone it is absent: the release is still complete, and the historical section says
+"unavailable" instead of showing numbers.
 
 **Execution modes.** Supported: a source checkout, or `UTE_ROOT` pointing at one. The wheel contains
 the Python package only (configs and dbt are project files), so an installed wheel alone stops with

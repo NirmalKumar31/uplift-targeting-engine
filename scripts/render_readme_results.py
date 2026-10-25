@@ -93,17 +93,19 @@ def render(res: dict) -> str:
         "",
         "**2 · Historical reused test** (the 2026-10-24 bundle; not independent confirmation).",
         "",
-        "| Model | Qini AUC [95% CI] | Uplift in top 10%, pp [95% CI] |",
-        "|---|---|---|",
     ]
-    for m in H["models"]:
+    if not H.get("available", True):
+        lines.append(f"_Unavailable for this release: {H['reason']}. No numbers substituted._")
+    else:
+        lines += ["| Model | Qini AUC [95% CI] | Uplift in top 10%, pp [95% CI] |", "|---|---|---|"]
+    for m in H.get("models", []):
         lines.append(
             f"| {m['model']} | {m['qini_auc']:+.4f} "
             f"[{m['qini_auc_low']:+.4f}, {m['qini_auc_high']:+.4f}] | "
             f"{100 * m['uplift_at_10']:+.1f} [{100 * m['uplift_at_10_low']:+.1f}, "
             f"{100 * m['uplift_at_10_high']:+.1f}] |"
         )
-    for d in H["differences"]:
+    for d in H.get("differences", []):
         if d["policy"] == "champion_at_41pct" and d["reference"] == "blanket":
             lines += [
                 "",

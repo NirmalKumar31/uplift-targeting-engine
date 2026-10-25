@@ -20,6 +20,15 @@ import pandas as pd
 import plotly.graph_objects as go
 
 ROOT = Path(__file__).resolve().parents[1]
+# Stable DOM ids per chart; scripts/browser_check.py requires them (independently of the page).
+CHART_IDS = {
+    "Policy value, outer-fold validation": "policy-value",
+    "Calibration on held-out folds": "calibration",
+    "Qini curve, historical reused test": "hist-qini",
+    "Observed effect by out-of-fold score decile": "decile-effect",
+    "Predicted group mix by age band": "group-mix",
+    "Drivers of the raw uplift score": "drivers",
+}
 
 
 def main() -> None:
@@ -121,6 +130,7 @@ def main() -> None:
         )
     )
 
+    hist_ok = H.get("available", True)
     curves = mart("mart_qini_curves").query("source == 'historical reused test'")
     fig = go.Figure()
     ref = curves[curves.model == "champion"]
@@ -129,6 +139,7 @@ def main() -> None:
         y=ref.random_line,
         mode="lines",
         name="Random line",
+        meta="decorative",
         line=dict(color=MUTED, width=1.5),
         hoverinfo="skip",
     )
@@ -142,14 +153,15 @@ def main() -> None:
             line=dict(color=color, width=2),
         )
     fig.update_layout(xaxis_title="Share texted (%)", yaxis_title="Incremental buyers")
-    figures.append(
-        (
-            "historical",
-            "Qini curve, historical reused test",
-            style(fig, 360),
-            "Old bundle on its reused 40,008-customer test split.",
+    if hist_ok:
+        figures.append(
+            (
+                "historical",
+                "Qini curve, historical reused test",
+                style(fig, 360),
+                "Old bundle on its reused 40,008-customer test split.",
+            )
         )
-    )
 
     cate = mart("mart_experiment_cate").query("dimension == 'Predicted decile (OOF)'")
     cate = cate.sort_values("level")
@@ -214,8 +226,8 @@ def main() -> None:
     )
 
     dif = pd.DataFrame(A["differences"]).query("policy == 'deployed'")
-    hd = pd.DataFrame(H["differences"])
-    hm = pd.DataFrame(H["models"]).set_index("model")
+    hd = pd.DataFrame(H.get("differences", []))
+    hm = pd.DataFrame(H.get("models", [{"model": "champion"}])).set_index("model")
     dep = pol.loc["deployed"]
 
     def tile(k, v, sub=""):
@@ -249,8 +261,12 @@ def main() -> None:
         ),
         "historical": (
             "2 · Historical reused test (2026-10-24 bundle)",
-            H["source"] + ".",
-            [
+            f"Unavailable for this release: {H.get('reason')}. No historical numbers are shown."
+            if not hist_ok
+            else H["source"] + ".",
+            []
+            if not hist_ok
+            else [
                 tile(
                     "Champion Qini",
                     f"{hm.loc['champion', 'qini_auc']:+.4f}",
@@ -295,6 +311,7 @@ def main() -> None:
             if k2 != key:
                 continue
             body = fig.to_html(
+                div_id=CHART_IDS[h],
                 full_html=False,
                 include_plotlyjs="cdn" if first else False,
                 default_width="100%",

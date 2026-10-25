@@ -1,8 +1,15 @@
 """Shared data access, source labels, palette and chart styling for the BI dashboard.
 
-Data: the parquet marts and results.json of the *active release*, exported to data/marts/ (or
-$UTE_MARTS_DIR). Caches are keyed on the release id in RELEASE.json, so activating a new release
-is picked up on the next page load without clearing caches by hand.
+Data source, resolved on every page load (`source()`):
+
+1. `$UTE_MARTS_DIR` if set (tests, static builds),
+2. otherwise the marts of the release named by `releases/ACTIVE` - the same pointer the API
+   reads, so API and dashboard always serve one release, switching together at its atomic
+   replacement,
+3. otherwise (fresh clone, dashboard-only Docker image) the committed export `data/marts/`.
+
+Caches are keyed on (directory, release id), so a newly committed release is shown on the next
+page load without clearing caches by hand.
 """
 
 from __future__ import annotations
@@ -17,9 +24,28 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-MARTS = Path(
-    os.environ.get("UTE_MARTS_DIR", Path(__file__).resolve().parents[1] / "data" / "marts")
-)
+EXPORT = Path(__file__).resolve().parents[1] / "data" / "marts"
+
+
+def source() -> tuple[Path, str]:
+    """(marts directory, release id) to serve right now."""
+    if os.environ.get("UTE_MARTS_DIR"):
+        marts = Path(os.environ["UTE_MARTS_DIR"])
+    else:
+        marts = EXPORT
+        try:
+            from uplift_engine.config import load_config
+            from uplift_engine.release import active_release
+
+            marts = active_release(load_config())[1] / "marts"
+        except Exception:  # no project root / no active release: serve the committed export
+            pass
+    path = marts / "RELEASE.json"
+    if not path.exists():
+        st.error(f"No release found in `{marts}`. Run `uv run ute run` first.")
+        st.stop()
+    return marts, json.loads(path.read_text())["release_id"]
+
 
 # Validated categorical palette (fixed order) + chrome; see the dataviz reference palette.
 BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
@@ -64,45 +90,50 @@ SOURCES = {
 
 
 def release_id() -> str:
-    path = MARTS / "RELEASE.json"
-    if not path.exists():
-        st.error(f"No active release export in `{MARTS}`. Run `uv run ute run` first.")
-        st.stop()
-    return json.loads(path.read_text())["release_id"]
+    return source()[1]
+
+
+def has_mart(name: str) -> bool:
+    return (source()[0] / f"{name}.parquet").exists()
 
 
 @st.cache_data(show_spinner=False)
-def _load(name: str, rid: str) -> pd.DataFrame:
-    return duckdb.sql(f"SELECT * FROM '{(MARTS / f'{name}.parquet').as_posix()}'").df()
+def _load(name: str, marts: str, rid: str) -> pd.DataFrame:
+    return duckdb.sql(f"SELECT * FROM '{(Path(marts) / f'{name}.parquet').as_posix()}'").df()
 
 
 def load(name: str) -> pd.DataFrame:
-    if not (MARTS / f"{name}.parquet").exists():
-        st.error(f"Mart `{name}` is missing from the active release export.")
+    marts, rid = source()
+    if not (marts / f"{name}.parquet").exists():
+        st.error(f"Mart `{name}` is missing from release {rid}.")
         st.stop()
-    return _load(name, release_id())
+    return _load(name, str(marts), rid)
 
 
 @st.cache_data(show_spinner=False)
-def _results(rid: str) -> dict:
-    return json.loads((MARTS / "results.json").read_text())
+def _results(marts: str, rid: str) -> dict:
+    return json.loads((Path(marts) / "results.json").read_text())
 
 
 def results() -> dict:
-    return _results(release_id())
+    marts, rid = source()
+    return _results(str(marts), rid)
 
 
 @st.cache_data(show_spinner=False)
-def _query(sql: str, rid: str) -> pd.DataFrame:
+def _query(sql: str, marts: str, rid: str) -> pd.DataFrame:
     resolved = re.sub(
-        r"\{(\w+)\}", lambda m: f"'{(MARTS / (m.group(1) + '.parquet')).as_posix()}'", sql
+        r"\{(\w+)\}",
+        lambda m: f"'{(Path(marts) / (m.group(1) + '.parquet')).as_posix()}'",
+        sql,
     )
     return duckdb.sql(resolved).df()
 
 
 def query(sql: str) -> pd.DataFrame:
     """SQL over the mart parquet files; refer to a mart as {mart_name}."""
-    return _query(sql, release_id())
+    marts, rid = source()
+    return _query(sql, str(marts), rid)
 
 
 def source_badge(key: str) -> None:

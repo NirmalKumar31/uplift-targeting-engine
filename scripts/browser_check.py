@@ -3,8 +3,10 @@
     uv run --group browser python scripts/browser_check.py --site docs/index.html \
         [--streamlit http://localhost:8501] [--report docs/evidence/browser_check.json]
 
-Static site, desktop and phone width: every Plotly plot has traces with finite numeric data,
-hovering a point produces a tooltip, no console errors, no horizontal page overflow.
+Static site, desktop and phone width: every *required* chart (decided from results.json, not from
+the page) is present; each has non-decorative traces with finite numeric data and a working hover
+tooltip; no console errors; no horizontal page overflow. Decorative traces (e.g. the random line)
+are tagged `meta="decorative"` by build_site.py and exempt from the data check.
 Streamlit (optional): every page loads without a Streamlit exception and renders its charts or
 tables; the client search accepts regex metacharacters as literal text.
 Exits non-zero if any check fails.
@@ -18,36 +20,69 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+REQUIRED_CHARTS = ["policy-value", "calibration", "decile-effect", "group-mix", "drivers"]
+HISTORICAL_CHART = "hist-qini"
 
 PLOT_JS = """
-() => [...document.querySelectorAll('.js-plotly-plot')].map((gd, i) => {
+() => [...document.querySelectorAll('.js-plotly-plot')].map((gd) => {
   const traces = (gd._fullData || []).map(t => {
-    const nums = a => a == null ? [] : Array.from(a).filter(v => typeof v === 'number');
-    const xs = nums(t.x), ys = nums(t.y);
-    const vals = ys.length ? ys : xs;
-    return {type: t.type, n: Math.max(xs.length, ys.length, (t.x||[]).length, (t.y||[]).length),
-            numeric: vals.length, finite: vals.filter(Number.isFinite).length,
+    const vals = a => a == null ? [] : Array.from(a);
+    const xs = vals(t.x), ys = vals(t.y);
+    const data = ys.length ? ys : xs;
+    const nums = data.filter(v => typeof v === 'number');
+    return {type: t.type, name: t.name, decorative: t.meta === 'decorative',
+            n: data.length, finite: nums.filter(Number.isFinite).length,
             hover: t.hoverinfo !== 'skip'};
   });
-  return {index: i, traces};
+  return {id: gd.id, traces};
 })
 """
 
 HOVER_JS = """
-(i) => {
-  const gd = document.querySelectorAll('.js-plotly-plot')[i];
-  const k = gd._fullData.findIndex(t => t.hoverinfo !== 'skip' && (t.x||t.y||[]).length);
-  if (k < 0) return null;
+(id) => {
+  const gd = document.getElementById(id);
+  const k = gd._fullData.findIndex(t => t.meta !== 'decorative' && t.hoverinfo !== 'skip'
+                                        && (t.x || t.y || []).length);
+  if (k < 0) return 0;
   Plotly.Fx.hover(gd, [{curveNumber: k, pointNumber: 0}]);
   return gd.querySelectorAll('.hoverlayer .hovertext').length;
 }
 """
 
+
+def required_charts(results_path: Path | None) -> list[str]:
+    """The charts the page must contain, decided from results.json - not from the page."""
+    if results_path is None:
+        return list(REQUIRED_CHARTS)
+    res = json.loads(results_path.read_text())
+    hist = res.get("historical_test", {}).get("available", True)
+    return [*REQUIRED_CHARTS, *([HISTORICAL_CHART] if hist else [])]
+
+
+def evaluate_plots(plots: list[dict], hovers: dict[str, int], required: list[str]) -> dict:
+    """Pure verdict on what the browser measured (unit-testable without a browser)."""
+    by_id = {p["id"]: p for p in plots}
+    missing = [c for c in required if c not in by_id]
+    empty = {}
+    for cid in required:
+        for t in by_id.get(cid, {}).get("traces", []):
+            if not t["decorative"] and (t["n"] == 0 or t["finite"] == 0):
+                empty.setdefault(cid, []).append(t["name"])
+        if cid in by_id and not any(not t["decorative"] for t in by_id[cid]["traces"]):
+            empty.setdefault(cid, []).append("<no data traces>")
+    no_hover = [c for c in required if c in by_id and not hovers.get(c)]
+    return {
+        "missing_charts": missing,
+        "empty_data_traces": empty,
+        "charts_without_hover": no_hover,
+        "ok": not missing and not empty and not no_hover,
+    }
+
+
 PAGES = ["", "simulator", "segments", "models", "drivers", "health", "clients"]
 
 
-def check_site(browser, site: Path) -> dict:
+def check_site(browser, site: Path, required: list[str]) -> dict:
     out = {}
     for label, viewport in (("desktop", (1280, 900)), ("phone", (390, 844))):
         page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
@@ -60,24 +95,17 @@ def check_site(browser, site: Path) -> dict:
         page.wait_for_selector(".js-plotly-plot", timeout=60000)
         page.wait_for_timeout(1500)
         plots = page.evaluate(PLOT_JS)
-        hovers = [page.evaluate(HOVER_JS, i) for i in range(len(plots))]
+        hovers = {p["id"]: page.evaluate(HOVER_JS, p["id"]) for p in plots if p["id"]}
         overflow = page.evaluate("() => document.documentElement.scrollWidth - window.innerWidth")
-        bad = [
-            p
-            for p in plots
-            if not p["traces"] or any(t["n"] and t["finite"] == 0 for t in p["traces"])
-        ]
+        verdict = evaluate_plots(plots, hovers, required)
         out[label] = {
-            "n_plots": len(plots),
-            "plots_without_numeric_data": bad,
+            "charts": [p["id"] for p in plots],
+            "required": required,
+            **verdict,
             "hover_tooltips": hovers,
             "console_errors": errors,
             "horizontal_overflow_px": overflow,
-            "ok": bool(plots)
-            and not bad
-            and all(h for h in hovers if h is not None)
-            and not errors
-            and overflow <= 1,
+            "ok": verdict["ok"] and not errors and overflow <= 1,
         }
         page.close()
     return out
@@ -122,15 +150,23 @@ def check_streamlit(browser, url: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", type=Path)
+    ap.add_argument(
+        "--results",
+        type=Path,
+        help="results.json deciding the required charts (default: next to --site's "
+        "marts is unknown, so only the always-required charts)",
+    )
     ap.add_argument("--streamlit")
     ap.add_argument("--report", type=Path)
     args = ap.parse_args()
+    from playwright.sync_api import sync_playwright
+
     report = {"checked_at": datetime.now(UTC).isoformat()}
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome")
         report["browser"] = f"Chrome {browser.version}"
         if args.site:
-            report["site"] = check_site(browser, args.site)
+            report["site"] = check_site(browser, args.site, required_charts(args.results))
         if args.streamlit:
             report["streamlit"] = check_streamlit(browser, args.streamlit)
         browser.close()

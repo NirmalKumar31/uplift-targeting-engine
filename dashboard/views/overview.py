@@ -129,66 +129,72 @@ st.caption(
 st.header("2 · Historical reused test (2026-10-24 bundle)")
 source_badge("historical")
 H = res["historical_test"]
-hm = pd.DataFrame(H["models"]).set_index("model")
-hd = pd.DataFrame(H["differences"])
-c = st.columns(4)
-ch = hm.loc["champion"]
-c[0].metric(
-    "Champion Qini",
-    f"{ch.qini_auc:+.4f}",
-    f"[{ch.qini_auc_low:+.4f}, {ch.qini_auc_high:+.4f}]",
-    delta_color="off",
-    delta_arrow="off",
-)
-c[1].metric(
-    "Top-10% uplift",
-    pct(ch.uplift_at_10, 1, True),
-    f"[{pct(ch.uplift_at_10_low, 1, True)}, {pct(ch.uplift_at_10_high, 1, True)}]",
-    delta_color="off",
-    delta_arrow="off",
-)
-row = hd.query("policy == 'champion_at_41pct' and reference == 'blanket'").iloc[0]
-c[2].metric(
-    "41% policy − text everyone",
-    money(row.difference_per_1000, cur),
-    interval(row.difference_low, row.difference_high),
-    delta_color="off",
-    delta_arrow="off",
-)
-c[3].metric(
-    "Times this split was scored",
-    f"{len(H['access_log'])} logged",
-    "+ audit reuse",
-    delta_color="off",
-    delta_arrow="off",
-)
-curves = load("mart_qini_curves").query("source == 'historical reused test'")
-fig = go.Figure()
-ref = curves[curves.model == "champion"]
-fig.add_scatter(
-    x=ref.fraction * 100,
-    y=ref.random_line,
-    mode="lines",
-    name="Random line",
-    line=dict(color=MUTED, width=1.5),
-    hoverinfo="skip",
-)
-for name, color in (("champion", BLUE), ("response", ORANGE)):
-    d = curves[curves.model == name]
-    fig.add_scatter(
-        x=d.fraction * 100,
-        y=d.incremental_buyers,
-        mode="lines",
-        name=model_label(name),
-        line=dict(color=color, width=2),
-        hovertemplate="Top %{x:.0f}%: %{y:,.0f} additional buyers<extra></extra>",
+if not H.get("available", True):
+    st.warning(
+        f"Historical comparison unavailable for this release: {H['reason']}. "
+        "No historical numbers are shown or substituted."
     )
-fig.update_layout(
-    title="Qini curve on the historical reused test split",
-    xaxis_title="Share of customers texted (%)",
-    yaxis_title="Incremental buyers",
-)
-chart(fig, 360)
+else:
+    hm = pd.DataFrame(H["models"]).set_index("model")
+    hd = pd.DataFrame(H["differences"])
+    c = st.columns(4)
+    ch = hm.loc["champion"]
+    c[0].metric(
+        "Champion Qini",
+        f"{ch.qini_auc:+.4f}",
+        f"[{ch.qini_auc_low:+.4f}, {ch.qini_auc_high:+.4f}]",
+        delta_color="off",
+        delta_arrow="off",
+    )
+    c[1].metric(
+        "Top-10% uplift",
+        pct(ch.uplift_at_10, 1, True),
+        f"[{pct(ch.uplift_at_10_low, 1, True)}, {pct(ch.uplift_at_10_high, 1, True)}]",
+        delta_color="off",
+        delta_arrow="off",
+    )
+    row = hd.query("policy == 'champion_at_41pct' and reference == 'blanket'").iloc[0]
+    c[2].metric(
+        "41% policy − text everyone",
+        money(row.difference_per_1000, cur),
+        interval(row.difference_low, row.difference_high),
+        delta_color="off",
+        delta_arrow="off",
+    )
+    c[3].metric(
+        "Times this split was scored",
+        f"{len(H['access_log'])} logged",
+        "+ audit reuse",
+        delta_color="off",
+        delta_arrow="off",
+    )
+    curves = load("mart_qini_curves").query("source == 'historical reused test'")
+    fig = go.Figure()
+    ref = curves[curves.model == "champion"]
+    fig.add_scatter(
+        x=ref.fraction * 100,
+        y=ref.random_line,
+        mode="lines",
+        name="Random line",
+        line=dict(color=MUTED, width=1.5),
+        hoverinfo="skip",
+    )
+    for name, color in (("champion", BLUE), ("response", ORANGE)):
+        d = curves[curves.model == name]
+        fig.add_scatter(
+            x=d.fraction * 100,
+            y=d.incremental_buyers,
+            mode="lines",
+            name=model_label(name),
+            line=dict(color=color, width=2),
+            hovertemplate="Top %{x:.0f}%: %{y:,.0f} additional buyers<extra></extra>",
+        )
+    fig.update_layout(
+        title="Qini curve on the historical reused test split",
+        xaxis_title="Share of customers texted (%)",
+        yaxis_title="Incremental buyers",
+    )
+    chart(fig, 360)
 
 st.header("3 · Deployment projection (model-based)")
 source_badge("projection")

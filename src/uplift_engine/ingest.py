@@ -54,6 +54,10 @@ RAW_SCHEMAS: dict[str, dict[str, str]] = {
 }
 
 
+class ChecksumError(ValueError):
+    pass
+
+
 def sha256(path: Path, chunk: int = 1 << 20) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -74,7 +78,7 @@ def download(cfg: Config, force: bool = False) -> list[Path]:
             tmp.replace(dest)
         actual = sha256(dest)
         if actual != expected:
-            raise ValueError(
+            raise ChecksumError(
                 f"{name}: checksum mismatch (expected {expected[:12]}, got {actual[:12]})"
             )
         paths.append(dest)
@@ -82,7 +86,12 @@ def download(cfg: Config, force: bool = False) -> list[Path]:
 
 
 def load_raw(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[str, int]:
-    """(Re)create raw.<table> for every file and log row counts + hashes to meta.ingest_log."""
+    """(Re)create raw.<table> from each file, hashing the bytes actually loaded.
+
+    A file whose SHA-256 differs from the configured digest is refused here, at the loading
+    boundary, not only at download time. Every load is logged to meta.ingest_log under one
+    ingest_id with the expected and actual digests.
+    """
     con = con or connect(cfg)
     con.execute("CREATE SCHEMA IF NOT EXISTS raw")
     con.execute("CREATE SCHEMA IF NOT EXISTS meta")
@@ -90,9 +99,27 @@ def load_raw(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[
         "CREATE TABLE IF NOT EXISTS meta.ingest_log ("
         "table_name VARCHAR, file_name VARCHAR, sha256 VARCHAR, n_rows BIGINT, loaded_at TIMESTAMP)"
     )
+    for col in ("ingest_id", "expected_sha256", "actual_sha256"):
+        con.execute(f"ALTER TABLE meta.ingest_log ADD COLUMN IF NOT EXISTS {col} VARCHAR")
+
+    files = {}
+    for table in RAW_SCHEMAS:
+        file = cfg.paths.raw_dir / f"{table}.csv.gz"
+        if not file.exists():
+            raise FileNotFoundError(f"{file} is missing; run `ute ingest` to download it")
+        expected = cfg.dataset.files.get(file.name)
+        actual = sha256(file)
+        if expected is None or actual != expected:
+            raise ChecksumError(
+                f"{file.name}: SHA-256 {actual[:12]} does not match configured "
+                f"{(expected or 'none')[:12]}; refusing to load"
+            )
+        files[table] = (file, expected, actual)
+
+    ingest_id = f"ingest-{datetime.now(UTC):%Y%m%dT%H%M%S%f}"
     counts = {}
     for table, columns in RAW_SCHEMAS.items():
-        file = cfg.paths.raw_dir / f"{table}.csv.gz"
+        file, expected, actual = files[table]
         cols = ", ".join(f"'{c}': '{t}'" for c, t in columns.items())
         con.execute(
             f"CREATE OR REPLACE TABLE raw.{table} AS "
@@ -100,8 +127,9 @@ def load_raw(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[
         )
         n = con.execute(f"SELECT count(*) FROM raw.{table}").fetchone()[0]
         con.execute(
-            "INSERT INTO meta.ingest_log VALUES (?, ?, ?, ?, ?)",
-            [table, file.name, cfg.dataset.files.get(file.name, ""), n, datetime.now(UTC)],
+            "INSERT INTO meta.ingest_log (table_name, file_name, sha256, n_rows, loaded_at, "
+            "ingest_id, expected_sha256, actual_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [table, file.name, actual, n, datetime.now(UTC), ingest_id, expected, actual],
         )
         counts[table] = n
     return counts

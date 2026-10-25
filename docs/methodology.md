@@ -12,8 +12,9 @@ tau(x) = P(buy | x, SMS) - P(buy | x, no SMS)
 
 It is never observed for a single person (each client either got the SMS or didn't), but it can
 be estimated because the data comes from a **randomised experiment**: X5 RetailHero texted a random
-half of 200k clients. Randomisation is checked, not assumed (`ml.balance`: standardised mean
-difference < 0.1 on every feature).
+half of 200k clients. Measured covariates are balanced between arms (`ml.balance`: standardised mean
+difference < 0.1); that is a diagnostic consistent with the documented random assignment, not proof
+that randomisation worked.
 
 ## Data and features (dbt + DuckDB)
 
@@ -55,10 +56,13 @@ All learners share one LightGBM configuration (`configs/pipeline.yaml`) and are 
    drive every development decision: champion choice, ensemble members, and targeting depth.
 3. **Fixed selection rule.** The champion is the highest out-of-fold Qini among uplift learners
    (including the ensemble), decided before test is touched.
-4. **One look at test.** `ute evaluate` fits the champion on development data and scores test.
-   Every access is written to `meta.test_access_log`, so repeated peeking is on record.
-5. **Uncertainty everywhere.** Stratified bootstrap CIs (500 resamples) on every metric, paired
-   bootstrap for model-vs-model differences, and a 200-ranking random noise band.
+4. **Test access (historical).** `ute evaluate` fits the champion on development data and scores
+   test, logging each call to `meta.test_access_log`. The split was scored twice (before and after
+   the leakage fix) and reused by the 2026-10-25 audit, so it is a reused holdout. The log covers only
+   `pipeline.evaluate()`; it is an audit aid, not a lock.
+5. **Uncertainty (withdrawn).** The original bootstrap resampled within treatment × outcome cells,
+   which froze the response counts and understated uncertainty (a zero-width blanket-profit
+   interval). Those intervals are withdrawn pending the corrected arm-level bootstrap.
 
 Metrics match scikit-uplift's definitions (cross-checked to 10 decimal places) but are
 implemented directly and vectorised:

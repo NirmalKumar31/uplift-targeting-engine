@@ -49,7 +49,9 @@ def main() -> None:
     ).fetchall():
         dest = out / "tables" / f"{schema}.{table}.parquet"
         con.execute(f"COPY {schema}.{table} TO '{dest.as_posix()}' (FORMAT parquet)")
-        rows[f"{schema}.{table}"] = con.execute(f"SELECT count(*) FROM {schema}.{table}").fetchone()[0]
+        rows[f"{schema}.{table}"] = con.execute(
+            f"SELECT count(*) FROM {schema}.{table}"
+        ).fetchone()[0]
     con.close()
 
     for src, name in [(ROOT / "artifacts", "artifacts"), (ROOT / "data" / "marts", "marts")]:
@@ -63,8 +65,12 @@ def main() -> None:
             shutil.copy2(log, out / "logs" / Path(log).name)
 
     git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True,
-                           text=True).stdout.strip() != ""
+    dirty = (
+        subprocess.run(
+            ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True
+        ).stdout.strip()
+        != ""
+    )
     manifest = {
         "label": args.label,
         "created_at": datetime.now(UTC).isoformat(),
@@ -74,7 +80,8 @@ def main() -> None:
         "table_rows": rows,
         "files": {
             str(p.relative_to(out)): {"sha256": sha256(p), "bytes": p.stat().st_size}
-            for p in sorted(out.rglob("*")) if p.is_file()
+            for p in sorted(out.rglob("*"))
+            if p.is_file()
         },
     }
     dest = ROOT / "docs" / "evidence" / f"{args.label}_manifest.json"

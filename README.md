@@ -17,44 +17,63 @@ Built on the public [X5 RetailHero](https://ods.ai/competitions/x5-retailhero-up
 randomised experiment: 400k loyalty-card holders, 45.8M purchase lines, and 200k clients of whom
 a random half received the SMS.
 
+> **Evidence status (2026-10-25).** An independent audit ([docs/AUDIT_2026-10-25.md](docs/AUDIT_2026-10-25.md))
+> found that several results below were stated more strongly than the evidence supports. Remediation
+> is in progress; until it lands, read the numbers below as **historical point estimates** with these
+> corrections:
+>
+> - The "locked" test split was **scored twice** by the pipeline (before and after a leakage fix, with
+>   a different champion each time) and **reused again by the audit**. It is a corrected, reused
+>   holdout, not a pristine single-look test.
+> - The profit intervals were computed with a defective bootstrap (it froze the response counts, so
+>   the blanket-policy interval had zero width). They are withdrawn. The audit's corrected
+>   arm-bootstrap diagnostic for the old 41% policy's advantage over texting everyone is roughly
+>   **−₽240 to +₽1,253 per 1,000 clients**, an interval that includes zero. "About 2×" is a point
+>   estimate, not an established improvement.
+> - The **deployed** rule (calibrated uplift above cost/margin) was never evaluated on held-out data
+>   as a complete policy. The test numbers describe a different rule (raw-score ranking at 41%).
+> - Full-population profit and extra-buyer figures are **model-based projections**, not observed
+>   campaign results.
+> - The explanation surrogate's R² of 0.98 was measured on its own training rows. It is not held-out
+>   fidelity and not "98% accuracy".
+>
+> Pre-remediation outputs are preserved; see [docs/evidence/](docs/evidence/).
+
 ## Why uplift, not response
 
-A response model texts the people most likely to buy, and most of them would have bought
-anyway. Uplift modeling targets the *persuadable*. On the locked test set the traditional
-response model does **worse than random** (Qini −0.0054); the uplift model's top 10% respond
-**+11.9pp** to the SMS, 3.6× the average effect.
+A response model texts the people most likely to buy, and many of them would have bought anyway.
+Uplift modeling ranks people by how much the message changes their purchase probability. On the
+historical (reused) test split, the response model's ranking was no better than random (Qini
+−0.0054), while the uplift model's top 10% showed +11.9pp observed uplift versus a +3.3pp average.
 
-## Results (locked test set, 40,008 clients, evaluated once after model selection)
+## Historical results (reused test split, 40,008 clients; point estimates)
 
-| | Qini AUC [95% CI] | Uplift @10% | Uplift @30% | Profit / 1,000 clients* |
+| | Qini AUC | Uplift @10% | Uplift @30% | Profit / 1,000 clients* |
 |---|---|---|---|---|
-| **Champion: S-learner** | **+0.0164** [+0.0099, +0.0224] | **+11.9pp** [9.1, 14.6] | +6.3pp | **₽1,014** |
-| Response model (traditional) | −0.0054 [−0.0109, +0.0001] | +0.9pp | +2.0pp | −₽435 |
-| Random targeting | −0.0015 (noise band ±0.0065) | +2.9pp | +3.3pp | −₽35 |
+| Champion: S-learner | +0.0164 | +11.9pp | +6.3pp | ₽1,014 |
+| Response model (traditional) | −0.0054 | +0.9pp | +2.0pp | −₽435 |
+| Random targeting (one draw) | −0.0015 | +2.9pp | +3.3pp | −₽35 |
 | Text everyone | | | | ₽501 |
 
-\*At the targeting depth chosen on development data (41%), SMS ₽3, margin ₽105 per extra purchase.
-Targeting by uplift earns **2.0× texting everyone**; the response model loses money.
+\*Point estimates at the champion's development-chosen depth of 41% (the response and random
+rows are evaluated at that same depth, not at their own best policies), with SMS ₽3 and an
+**assumed** ₽105 margin per additional buyer. Intervals are withheld until the corrected bootstrap
+is in place.
 
-**Compared with the previous version of this project**
-([PromoLift_AI](https://github.com/nishanth3112/PromoLift_AI)): test Qini **+0.0164 vs
-+0.0078** (2.1×) and top-10% uplift **+11.9pp vs +9.0pp**, from richer warehouse features
-(loyalty-points behaviour, short-window momentum, product mix). The two projects used different
-random splits, so this is indicative rather than a paired comparison.
+The previous version of this project ([PromoLift_AI](https://github.com/nishanth3112/PromoLift_AI))
+reported test Qini +0.0078 on a different random split, so the two are not a controlled comparison.
 
-**Deployed campaign** (all 400,162 clients scored with the production model):
-139,557 texted, 15,538 held out as a random control group, **7,371 expected extra purchases**,
-expected profit **₽357,681 vs ₽200,025** for texting everyone.
+**Deployment projection** (model-based, not observed): 139,557 clients recommended for the SMS,
+15,538 held back as a control group, and model-projected profit of ₽357,681 vs ₽200,025 for
+texting everyone, under the assumed economics.
 
 ### A leakage bug, caught and fixed
 
 The first full run scored a test Qini of +0.031. That was too good to accept without a check, and
 the check found the cause: `first_redeem_date` in `clients.csv` runs to **November 2019**, months
-after the SMS, and the treated arm has more of these late redemptions. That makes it a
-post-treatment variable. `stg_clients` now drops redemptions after the reference date, and a dbt
-test (`no_future_dates`) fails the build if any feature input is dated after it. Every number
-above comes from the corrected pipeline. `meta.test_access_log` records both test evaluations,
-the leaky one and the fixed one; the model choice was made by the fixed out-of-fold rule each time.
+after the SMS, and the treated arm has more of these late redemptions, so it is a post-treatment
+variable. `stg_clients` now drops redemptions after the reference date. The fix required a second
+look at the test split, which is why that split is described as reused.
 
 ## Architecture
 
@@ -63,7 +82,7 @@ flowchart LR
     A[X5 files<br/>SHA-256 verified] -->|ute ingest| B[(DuckDB<br/>raw)]
     B -->|dbt: staging + 6 feature groups<br/>+ data tests| C[(features.client_features<br/>400k x 47)]
     C -->|ute train<br/>5-fold cross-fitting| D[7 learners + ensemble<br/>leaderboard]
-    D -->|ute evaluate<br/>locked test, logged| E[test scorecard]
+    D -->|ute evaluate<br/>reused holdout, access logged| E[test scorecard]
     D -->|ute deploy| F[calibrated uplift<br/>send list + holdout]
     F -->|ute explain| G[surrogate TreeSHAP]
     E & F & G -->|dbt marts| H[(16 BI marts)]
@@ -110,7 +129,7 @@ parameters, folds, bootstrap size, economics and drift thresholds.
 
 ## What drives uplift
 
-A LightGBM surrogate reproduces the deployed scores (R² 0.98), and TreeSHAP attributes them:
+A LightGBM surrogate fitted to the deployed scores (training-sample R² 0.98; held-out fidelity not yet measured) is explained with TreeSHAP:
 **age** (11%), **visits in the last 60 days** (9%), **card tenure** (7%), and the **share of
 purchases paid with promotional (express) points** (7%) lead. Older, less frequent shoppers who
 have used promotions before are the most persuadable. Age is the top driver, so check whether

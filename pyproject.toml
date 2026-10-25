@@ -55,5 +55,9 @@ addopts = "-q"
 source = ["uplift_engine"]
 branch = true
 
+[tool.ruff.lint.per-file-ignores]
+# The page template is HTML; wrapping it would change the generated markup.
+"scripts/build_site.py" = ["E501"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["uplift_engine", "common"]

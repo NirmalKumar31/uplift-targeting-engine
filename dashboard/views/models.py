@@ -7,7 +7,7 @@ st.title("Model performance")
 board = load("mart_model_leaderboard").sort_values("qini_auc")
 st.markdown(
     "Every learner is cross-fitted (5 folds) on the 160k-client development set; the "
-    "champion is fixed by out-of-fold Qini **before** the locked 40k-client test set is "
+    "champion is fixed by out-of-fold Qini **before** the 40k-client historical test split is "
     "scored. Learners share one LightGBM configuration."
 )
 

@@ -7,7 +7,8 @@ st.title("What drives uplift?")
 imp = load("mart_feature_importance").sort_values("mean_abs_contribution", ascending=False)
 r2 = imp.surrogate_r2.iloc[0]
 st.markdown(
-    f"A LightGBM surrogate reproduces the deployed uplift scores (R² = **{r2:.2f}**) and exact "
+    f"A LightGBM surrogate fitted to the deployed uplift scores (training-sample R² = "
+    f"**{r2:.2f}**; held-out fidelity not yet measured) and exact "
     "TreeSHAP splits each client's score among the features. This describes what the *model* "
     "relies on, not what causes buying: correlated features share credit."
 )

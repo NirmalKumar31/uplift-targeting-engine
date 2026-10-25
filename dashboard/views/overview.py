@@ -13,7 +13,7 @@ st.title("Who should get the promo SMS?")
 st.markdown(
     f"A causal **uplift model** ranks every loyalty-card holder by how much the SMS *changes* "
     f"their chance of buying, then texts only the clients where that change pays for the message. "
-    f"Champion: **{model_label(champ.model)}**, judged on a locked test set of "
+    f"Champion: **{model_label(champ.model)}**, scored on a reused historical test split of "
     f"{int(champ.n_test):,} clients from a randomised experiment."
 )
 
@@ -27,7 +27,7 @@ c[1].metric(
     delta_arrow="off",
 )
 c[2].metric(
-    "Expected extra purchases",
+    "Projected extra buyers (model-based)",
     f"{policy.expected_incremental_purchases:,.0f}",
     f"vs {policy.ate * policy.n_scored:,.0f} texting everyone",
     delta_color="off",
@@ -35,7 +35,7 @@ c[2].metric(
 )
 lift = policy.expected_profit - policy.blanket_expected_profit
 c[3].metric(
-    "Expected campaign profit",
+    "Projected profit (model-based)",
     money(policy.expected_profit, cur),
     f"{money(lift, cur)} vs texting everyone",
 )
@@ -95,7 +95,7 @@ with left:
             hovertemplate="Top %{x:.0f}% texted<br>%{y:,.0f} extra buyers<extra></extra>",
         )
     fig.update_layout(
-        title="Qini curve on the locked test set",
+        title="Qini curve, historical (reused) test split",
         xaxis_title="Share of clients texted (%)",
         yaxis_title="Incremental buyers",
     )

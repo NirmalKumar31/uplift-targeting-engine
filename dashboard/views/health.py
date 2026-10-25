@@ -11,7 +11,8 @@ n_bad = int((~bal.balanced).sum())
 st.markdown(
     f"{'✅' if n_bad == 0 else '⚠️'} **{len(bal) - n_bad} of {len(bal)} features balanced** "
     "(|standardised mean difference| < 0.1 between texted and not-texted clients): "
-    "randomisation worked, so differences in purchase rates are caused by the SMS."
+    "consistent with the documented random assignment "
+    "(a diagnostic on measured covariates, not proof)."
 )
 fig = go.Figure()
 fig.add_vrect(x0=-0.1, x1=0.1, fillcolor=GRID, opacity=0.5, line_width=0)

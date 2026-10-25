@@ -82,7 +82,7 @@ def main() -> None:
             hovertemplate="Top %{x:.0f}%: %{y:,.0f} extra buyers<extra></extra>",
         )
     fig.update_layout(
-        title="Qini curve, locked test set",
+        title="Qini curve, historical (reused) test split",
         xaxis_title="Share texted (%)",
         yaxis_title="Incremental buyers",
     )
@@ -259,7 +259,7 @@ def main() -> None:
         hovertemplate="%{y}: %{x:.1f}%<extra></extra>",
     )
     fig.update_layout(
-        title=f"Top uplift drivers, surrogate TreeSHAP (R² {imp.surrogate_r2.iloc[0]:.2f})",
+        title=f"Top uplift drivers, surrogate TreeSHAP (training-sample R² {imp.surrogate_r2.iloc[0]:.2f})",
         xaxis_title="% of attribution",
         bargap=0.25,
     )
@@ -269,9 +269,9 @@ def main() -> None:
     tiles = [
         ("Clients scored", f"{policy.n_scored:,.0f}"),
         ("Recommended to text", f"{policy.n_send:,.0f} ({policy.n_send / policy.n_scored:.0%})"),
-        ("Expected extra purchases", f"{policy.expected_incremental_purchases:,.0f}"),
-        ("Expected profit", f"₽{policy.expected_profit:,.0f}"),
-        ("vs texting everyone", f"{'+' if lift >= 0 else '−'}₽{abs(lift):,.0f}"),
+        ("Projected extra buyers (model-based)", f"{policy.expected_incremental_purchases:,.0f}"),
+        ("Projected profit (model-based)", f"₽{policy.expected_profit:,.0f}"),
+        ("Projected vs texting everyone", f"{'+' if lift >= 0 else '−'}₽{abs(lift):,.0f}"),
         ("Test Qini (champion)", f"{champ.qini_auc:+.4f}"),
         ("Top-10% uplift (test)", f"{champ.uplift_at_10:+.1%}"),
         ("Response model top-10%", f"{resp.uplift_at_10:+.1%}"),
@@ -321,7 +321,12 @@ def main() -> None:
 <p class="lede">Causal uplift model on the X5 RetailHero randomised SMS experiment (400k loyalty
 clients). It ranks clients by how much the message <em>changes</em> their chance of buying and
 texts only where that pays for the SMS. Champion: <b>{html.escape(model_label(champ.model))}</b>,
-evaluated once on a locked test set of {int(champ.n_test):,} clients.</p>
+scored on a reused historical test split of {int(champ.n_test):,} clients.</p>
+<p class="lede"><b>Evidence status:</b> historical point estimates on a test split that was scored twice
+(before and after a leakage fix) and reused by an audit; profit intervals withdrawn pending a corrected
+bootstrap; the deployed calibrated rule has not yet been evaluated as a complete policy; profit and
+buyer totals are model-based projections. See
+<a href="https://github.com/NirmalKumar31/uplift-targeting-engine/blob/main/docs/AUDIT_2026-10-25.md">the audit</a>.</p>
 <div class="tiles">{tiles_html}</div>
 <div class="grid">{cards}</div>
 <footer>Static snapshot of the Streamlit BI dashboard, built from the dbt marts by

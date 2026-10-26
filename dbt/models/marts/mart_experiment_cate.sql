@@ -1,5 +1,4 @@
--- Observed SMS effect (difference in means, no model) in slices of the randomised experiment.
--- 'Predicted decile' uses out-of-fold scores: the production model saw these customers.
+-- Observed uplift by slice. Decile uses out-of-fold scores.
 with exp as (
     select * from {{ ref('dim_client') }} where in_experiment
 ),

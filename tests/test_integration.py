@@ -1,9 +1,4 @@
-"""End-to-end through the real entry points on a miniature raw dataset (no network).
-
-ingest -> transform (dbt build incl. source tests) -> assess -> deploy -> historical -> explain
--> marts -> release, then API, dashboard and static-site smoke tests against the active release,
-and the dbt build failures the point-in-time and grain guards must produce.
-"""
+"""End-to-end tests through the CLI on the raw fixture."""
 
 from __future__ import annotations
 
@@ -96,8 +91,6 @@ def test_history_is_preserved_across_releases(built):
 
 
 def test_assessment_never_fits_on_validation_customers_or_labels(built, monkeypatch):
-    """Spy on every outer-fold fit; then perturb fold-0 validation labels with folds held fixed
-    and require fold 0's fitted procedure to be bit-identical (positive control: fold 1 moves)."""
     import numpy as np
 
     from uplift_engine import pipeline
@@ -273,8 +266,8 @@ def test_static_site_and_dashboard_smoke(built, tmp_path, monkeypatch):
     html = (site / "index.html").read_text()
     from plotly.offline import get_plotlyjs_version
 
-    assert html.count("cdn.plot.ly") == 1  # plotly.js loaded exactly once...
-    assert f"plotly-{get_plotlyjs_version()}.min.js" in html  # ...matching the serializer
+    assert html.count("cdn.plot.ly") == 1
+    assert f"plotly-{get_plotlyjs_version()}.min.js" in html
 
     from streamlit.testing.v1 import AppTest
 

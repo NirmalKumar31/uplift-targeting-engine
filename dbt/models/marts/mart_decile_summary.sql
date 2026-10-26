@@ -1,4 +1,3 @@
--- All scored customers by raw-score decile (1 = highest). Projections are model-based.
 select
     uplift_decile,
     count(*) as n_clients,

@@ -1,7 +1,4 @@
-"""Uplift Targeting Engine - BI dashboard.
-
-uv run streamlit run dashboard/app.py
-"""
+"""Streamlit BI dashboard: `uv run streamlit run dashboard/app.py`."""
 
 import streamlit as st
 

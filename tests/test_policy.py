@@ -55,14 +55,14 @@ def test_evaluate_policies_paired_and_baselines(experiment):
     )
     v = vals.set_index("policy")
     assert v.loc["no_send", "value_per_1000"] == 0
-    assert v.loc["blanket", "value_high"] > v.loc["blanket", "value_low"]  # A1: nonzero width
+    assert v.loc["blanket", "value_high"] > v.loc["blanket", "value_low"]
     assert v.loc["random_30", "value_per_1000"] == pytest.approx(
         expected_random_value(y, t, 0.3, 100, 3)
     )
     same = diffs.query("policy == 'good_copy' and reference == 'good'").iloc[0]
     assert same.difference_per_1000 == 0 and same.difference_low == 0 == same.difference_high
     vs_blanket = diffs.query("policy == 'good' and reference == 'blanket'").iloc[0]
-    assert vs_blanket.difference_low > 0  # strong known effect beats texting everyone
+    assert vs_blanket.difference_low > 0
     assert {"frac_positive", "n_undefined"} <= set(diffs.columns)
     assert v.loc["good", "n_selected_treated"] + v.loc["good", "n_selected_control"] == good.sum()
 

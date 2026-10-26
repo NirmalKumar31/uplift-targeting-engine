@@ -1,18 +1,7 @@
-"""Feature contract shared by training and serving.
+"""Feature contract shared by training and the API.
 
-The contract is built from the training feature frame at deploy time, checked against every
-training row, and stored in the model bundle. Serving validates each record against it:
-
-* omitted key   -> missing value (allowed unless the feature is a core feature)
-* explicit null -> missing value (same rule)
-* invalid value -> rejected: wrong type (strings for numerics, non-bool for flags), non-finite
-                   numbers, values outside the feature's domain, unknown category levels,
-                   unknown keys
-* usability     -> every core feature present and non-null, and at least `min_completeness` of
-                   all features non-null; otherwise the record is rejected rather than scored
-
-Core features are the ones every training customer has (purchase history and card tenure), so a
-record without them is not like anything the model learned from.
+Omitted or null features are allowed unless they are core features; wrong types, non-finite
+numbers, out-of-range values, unknown categories and unknown keys are rejected.
 """
 
 from __future__ import annotations
@@ -29,7 +18,6 @@ MIN_COMPLETENESS = 0.6
 
 
 def _domain(name: str) -> tuple[float, float | None]:
-    """Hard domain bounds (inclusive) implied by each feature's definition."""
     if name == "age":
         return 14.0, 100.0
     if name == "mean_hour":
@@ -38,7 +26,7 @@ def _domain(name: str) -> tuple[float, float | None]:
         return 0.0, 1.0
     if name == "txn_trend_30d":
         return 0.0, None
-    return 0.0, None  # counts, days, money, points, ratios: all non-negative by construction
+    return 0.0, None
 
 
 @dataclass
@@ -85,7 +73,6 @@ class FeatureContract:
         return contract
 
     def check_frame(self, X: pd.DataFrame) -> None:
-        """Every non-null training value must satisfy the domain (else the contract is wrong)."""
         for s in self.specs:
             v = X[s.name]
             if s.kind == "numeric":
@@ -104,7 +91,7 @@ class FeatureContract:
                     raise ValueError(f"training column {s.name} has unknown levels {extra}")
 
     def validate_records(self, records: list[dict]) -> tuple[pd.DataFrame, list[float]]:
-        """Return the model-ready frame and per-record completeness, or raise ContractError."""
+        """Return the model frame and per-record completeness, or raise ContractError."""
         errors, rows, completeness = [], [], []
         known = set(self.columns) | {"client_id"}
         by_name = {s.name: s for s in self.specs}
@@ -168,7 +155,6 @@ def _check(spec: FeatureSpec, value) -> str | None:
 
 
 def to_model_frame(frame: pd.DataFrame, contract: FeatureContract) -> pd.DataFrame:
-    """Column order and dtypes exactly as in training (categoricals with fixed levels)."""
     out = pd.DataFrame(index=frame.index)
     for s in contract.specs:
         v = frame[s.name] if s.name in frame else pd.Series([None] * len(frame), index=frame.index)

@@ -63,7 +63,7 @@ def test_arm_bootstrap_fixes_arm_sizes_and_lets_responses_vary(experiment):
     treated = [t[i].sum() for i in draws.indices]
     responders = [y[i][t[i] == 1].sum() for i in draws.indices]
     assert set(treated) == {t.sum()}
-    assert len(set(responders)) > 10  # the defect froze this count
+    assert len(set(responders)) > 10
     assert draws.spec["resampling_unit"] == "customer"
 
 
@@ -94,8 +94,7 @@ def test_known_effect_detected_and_null_not(experiment):
 
 
 def test_undefined_replicates_are_counted_not_zeroed():
-    # The point estimate is defined (the top 2 hold one customer of each arm); some resamples
-    # put only one arm in the top 2, and those must be counted as undefined.
+    # Point estimate is defined; some resamples have only one arm in the top 2.
     t = np.array([1, 0, 1, 0, 1, 0])
     y = np.array([1, 0, 1, 0, 1, 0])
     s = np.arange(6.0)

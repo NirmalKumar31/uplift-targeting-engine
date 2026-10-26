@@ -1,10 +1,4 @@
-"""Typed pipeline configuration loaded from configs/pipeline.yaml.
-
-Supported execution mode: a source checkout (or any directory laid out like one). The project root
-is `$UTE_ROOT` if set, otherwise the nearest directory at or above the working directory that holds
-`configs/pipeline.yaml`, otherwise the checkout this module lives in. An installed wheel alone is
-not a runnable pipeline: configs/ and dbt/ are project files, not package data.
-"""
+"""Pipeline configuration (configs/pipeline.yaml)."""
 
 from __future__ import annotations
 
@@ -132,15 +126,11 @@ class Config(BaseModel):
     root: Path | None = None
 
     def fingerprint_payload(self) -> dict:
-        """Settings that change results (paths excluded so a moved checkout keeps its identity)."""
         return self.model_dump(mode="json", exclude={"paths", "root"})
 
 
 def load_config(path: Path | None = None, root: Path | None = None) -> Config:
-    """Load the pipeline config: `path`, else `$UTE_CONFIG`, else <project root>/configs/...
-
-    API and dashboard call this with no arguments, so `UTE_CONFIG` points both consumers at the
-    same project (and so the same `releases/ACTIVE`)."""
+    """Load `path`, else $UTE_CONFIG, else configs/pipeline.yaml under the project root."""
     root = root or project_root()
     path = path or os.environ.get("UTE_CONFIG") or root / CONFIG_REL
     cfg = Config.model_validate(yaml.safe_load(Path(path).read_text()))

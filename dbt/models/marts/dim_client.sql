@@ -1,5 +1,3 @@
--- Customer 360 for the release: features, truthful bands, scores, predicted group, campaign action.
--- Age handling: raw ages outside 14-100 and missing ages are both 'Unknown' (see stg_clients).
 with scores as ({{ from_run('scores', 'deploy') }})
 select
     f.client_id,

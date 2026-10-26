@@ -1,4 +1,4 @@
-"""`ute` command line. `ute run` executes every stage into one new release and activates it."""
+"""`ute` command line."""
 
 from __future__ import annotations
 
@@ -40,7 +40,6 @@ def _log(msg: str) -> None:
 
 
 def dbt(cfg: Config, *args: str, extra_vars: dict | None = None) -> None:
-    """Run dbt from this environment with as_of (and release vars) passed from the config."""
     exe = shutil.which("dbt", path=str(Path(sys.executable).parent)) or "dbt"
     project = cfg.root / "dbt"
     dbt_vars = {"as_of": cfg.dataset.as_of.strftime("%Y-%m-%d %H:%M:%S"), **(extra_vars or {})}
@@ -60,7 +59,7 @@ def dbt(cfg: Config, *args: str, extra_vars: dict | None = None) -> None:
 
 @app.command()
 def ingest(config: Path | None = ConfigOpt, force: bool = False) -> None:
-    """Download the raw files and load them (SHA-256 verified at download and at load)."""
+    """Download the raw files and load them into DuckDB."""
     cfg = _cfg(config)
     ingest_mod.download(cfg, force=force)
     with connect(cfg) as con:
@@ -71,10 +70,7 @@ def ingest(config: Path | None = ConfigOpt, force: bool = False) -> None:
 
 @app.command()
 def transform(config: Path | None = ConfigOpt) -> None:
-    """dbt: point-in-time staging + feature store with data tests.
-
-    The build is recorded as `building` before dbt touches the workspace, so a build that fails
-    partway can never be mistaken for the previous successful one."""
+    """Build staging tables and the feature store with dbt."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         build_id = begin_feature_build(con, cfg)
@@ -90,7 +86,7 @@ def transform(config: Path | None = ConfigOpt) -> None:
 
 @app.command()
 def assess(config: Path | None = ConfigOpt, new_release: bool = False) -> None:
-    """Outer-fold retrospective validation of the complete policy procedure."""
+    """Outer-fold validation of the full policy procedure."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         if new_release:
@@ -100,7 +96,7 @@ def assess(config: Path | None = ConfigOpt, new_release: bool = False) -> None:
 
 @app.command()
 def deploy(config: Path | None = ConfigOpt) -> None:
-    """Fit the procedure on all labelled customers; score everyone; freeze the campaign."""
+    """Fit on all labelled customers, score everyone and freeze the campaign."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         pipeline.deploy(cfg, con, log=_log)
@@ -108,7 +104,7 @@ def deploy(config: Path | None = ConfigOpt) -> None:
 
 @app.command()
 def historical(config: Path | None = ConfigOpt) -> None:
-    """Corrected intervals for the reused 2026-10-24 test split (needs the local snapshot)."""
+    """Recompute intervals for the historical test split (needs the local snapshot)."""
     cfg = _cfg(config)
     ok, reason = pipeline.historical_available(cfg)
     if not ok:
@@ -120,7 +116,7 @@ def historical(config: Path | None = ConfigOpt) -> None:
 
 @app.command()
 def explain(config: Path | None = ConfigOpt) -> None:
-    """Raw-score attribution with held-out surrogate fidelity."""
+    """Feature attribution for the deployed model."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         pipeline.explain(cfg, con, log=_log)
@@ -128,8 +124,7 @@ def explain(config: Path | None = ConfigOpt) -> None:
 
 @app.command()
 def marts(config: Path | None = ConfigOpt) -> None:
-    """dbt marts from the release's latest runs; export them with results.json and
-    PRODUCERS.json (the exact runs they were built from) into the release directory."""
+    """Build the BI marts and results.json for the release being built."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         rid = release.building_release(cfg, con, create=False)
@@ -185,7 +180,7 @@ def marts(config: Path | None = ConfigOpt) -> None:
 
 @app.command(name="release")
 def release_cmd(config: Path | None = ConfigOpt) -> None:
-    """Validate the release being built and commit it (single atomic pointer replace)."""
+    """Validate the release being built and make it active."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         rid = release.building_release(cfg, con, create=False)
@@ -195,7 +190,7 @@ def release_cmd(config: Path | None = ConfigOpt) -> None:
 
 @app.command(name="export-send-list")
 def export_send_list(out: Path, config: Path | None = ConfigOpt) -> None:
-    """Write the active release's send list: action == 'send' only (holdout never included)."""
+    """Write the active campaign's send list (holdout excluded)."""
     import pandas as pd
 
     cfg = _cfg(config)
@@ -208,7 +203,7 @@ def export_send_list(out: Path, config: Path | None = ConfigOpt) -> None:
 
 @app.command()
 def status(config: Path | None = ConfigOpt) -> None:
-    """Reconcile derived state with releases/ACTIVE, then show releases."""
+    """Show releases and repair derived state if needed."""
     cfg = _cfg(config)
     with connect(cfg) as con:
         active = release.reconcile(cfg, con)
@@ -226,7 +221,7 @@ def status(config: Path | None = ConfigOpt) -> None:
 
 @app.command()
 def run(config: Path | None = ConfigOpt, skip_ingest: bool = False) -> None:
-    """Every stage into a new release, then activate it if validation passes."""
+    """Run every stage into a new release and activate it."""
     cfg = _cfg(config)
     hist_ok, hist_reason = pipeline.historical_available(cfg)
     console.print(

@@ -1,25 +1,4 @@
-"""Run lineage: what code, environment, configuration, data and features produced a result.
-
-Every pipeline run records a row in `meta.runs`:
-
-* `source_fp` - the **computational code fingerprint**: SHA-256 over the files that can change a
-  result (`COMPUTE_GLOBS`: package code, dbt models/macros/project, configs, uv.lock). Its per-file
-  payload is stored in `meta.fingerprint_payloads`, so two fingerprints can be compared file by
-  file. Dashboard, docs, tests and scripts are consumers and are deliberately excluded.
-* `env_fp` - Python and key package versions plus the uv.lock hash (payload stored likewise).
-* `config_hash`, `dataset_fp` (verified raw hashes of the latest ingest), `feature_build_id`.
-* `parent_run_ids` - the exact runs whose outputs this run consumed.
-* git commit and dirty flag when git is available (informational; never the only identity).
-
-Compatibility policy (enforced in release.validate): every run in a release must share one
-source_fp, env_fp, config_hash, dataset_fp and feature build. Any code or environment change means
-rebuilding the release.
-
-Feature builds (`meta.feature_build`) are recorded as `building` *before* dbt touches the
-workspace and marked `succeeded` only after the build and its tests pass; modelling stages call
-`require_fresh_features`, which refuses unless the latest build succeeded and still matches the
-current cutoff, feature SQL, raw ingest and feature-table schema.
-"""
+"""Run lineage: code, environment, config, data and feature-build fingerprints for every run."""
 
 from __future__ import annotations
 
@@ -65,7 +44,7 @@ LINEAGE_FIELDS = ("source_fp", "env_fp", "config_hash", "dataset_fp", "feature_b
 
 
 class LineageMismatchError(RuntimeError):
-    """Artifacts, data, features or configuration come from different generations."""
+    """Inputs or artifacts come from different generations."""
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -127,7 +106,6 @@ def feature_code_fingerprint(root: Path, as_of) -> str:
 
 
 def dataset_fingerprint(con: duckdb.DuckDBPyConnection) -> str:
-    """Digest of the verified raw-file hashes of the most recent ingest."""
     try:
         rows = con.execute(
             "SELECT table_name, actual_sha256 FROM meta.ingest_log WHERE ingest_id = "
@@ -194,10 +172,8 @@ def environment_fingerprint(con, root: Path) -> str:
     return _store_payload(con, "environment", environment(root))
 
 
-# --------------------------------------------------------------------------- feature builds
 def begin_feature_build(con, cfg: Config) -> str:
-    """Record a build as `building` before dbt runs: from now until `finish_feature_build`
-    succeeds, no modelling stage will accept the workspace."""
+    """Mark a feature build as in progress before dbt touches the workspace."""
     ensure_meta(con)
     build_id = f"features-{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
     con.execute(
@@ -224,7 +200,7 @@ def finish_feature_build(con, build_id: str, ok: bool) -> None:
 
 
 def require_fresh_features(con, cfg: Config) -> dict:
-    """The latest feature build, if and only if it is complete and current."""
+    """Latest feature build, only if it succeeded and still matches config, SQL, data and schema."""
     ensure_meta(con)
     row = con.execute(
         "SELECT build_id, dataset_fp, feature_code_fp, schema_fp, as_of, status "
@@ -260,9 +236,8 @@ def require_fresh_features(con, cfg: Config) -> dict:
     return build
 
 
-# --------------------------------------------------------------------------- runs
 class Run:
-    """Records one pipeline stage in meta.runs (status running -> succeeded/failed)."""
+    """Context manager that records one pipeline stage in meta.runs."""
 
     def __init__(
         self,

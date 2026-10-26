@@ -1,16 +1,4 @@
-"""Shared data access, source labels, palette and chart styling for the BI dashboard.
-
-Data source, resolved on every page load (`source()`):
-
-1. `$UTE_MARTS_DIR` if set (tests, static builds),
-2. otherwise the marts of the release named by `releases/ACTIVE` - the same pointer the API
-   reads, so API and dashboard always serve one release, switching together at its atomic
-   replacement,
-3. otherwise (fresh clone, dashboard-only Docker image) the committed export `data/marts/`.
-
-Caches are keyed on (directory, release id), so a newly committed release is shown on the next
-page load without clearing caches by hand.
-"""
+"""Shared data access, labels and chart styling for the dashboard pages."""
 
 from __future__ import annotations
 
@@ -28,7 +16,9 @@ EXPORT = Path(__file__).resolve().parents[1] / "data" / "marts"
 
 
 def source() -> tuple[Path, str]:
-    """(marts directory, release id) to serve right now."""
+    """Marts directory and release id to serve: $UTE_MARTS_DIR, else the active release, else
+    the committed export in data/marts.
+    """
     if os.environ.get("UTE_MARTS_DIR"):
         marts = Path(os.environ["UTE_MARTS_DIR"])
     else:
@@ -38,7 +28,7 @@ def source() -> tuple[Path, str]:
             from uplift_engine.release import active_release
 
             marts = active_release(load_config())[1] / "marts"
-        except Exception:  # no project root / no active release: serve the committed export
+        except Exception:  # no active release: use the committed export
             pass
     path = marts / "RELEASE.json"
     if not path.exists():
@@ -47,7 +37,7 @@ def source() -> tuple[Path, str]:
     return marts, json.loads(path.read_text())["release_id"]
 
 
-# Validated categorical palette (fixed order) + chrome; see the dataviz reference palette.
+# Categorical palette, fixed order.
 BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
 MUTED, GRID, AXIS, INK, INK2 = "#898781", "#e1e0d9", "#c3c2b7", "#0b0b0b", "#52514e"
 GOOD, CRITICAL, WARNING = "#0ca30c", "#d03b3b", "#fab219"
@@ -198,7 +188,7 @@ def style(fig: go.Figure, height: int = 380, legend: bool = True) -> go.Figure:
 
 
 def chart(fig: go.Figure, height: int = 380, legend: bool = True, note: str = "") -> None:
-    """Render with the title as page text (avoids title/legend collisions in Streamlit)."""
+    """Render a figure with its title as page text."""
     title = fig.layout.title.text
     if title:
         st.markdown(f"**{title}**")
@@ -222,7 +212,6 @@ def money(x: float, currency: str = "₽") -> str:
 
 
 def send_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows a send-list export may contain: frozen campaign action 'send' only (never holdout)."""
     return df[df.action == "send"]
 
 

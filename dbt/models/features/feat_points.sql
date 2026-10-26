@@ -1,5 +1,4 @@
--- Loyalty-points behaviour. Express points come from promotions, so these columns are the
--- closest proxy for how a client has responded to past offers.
+-- Express points come from promotions: a proxy for past offer response.
 select
     client_id,
     sum(regular_points_received) as regular_points_received,

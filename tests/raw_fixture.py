@@ -1,19 +1,4 @@
-"""Deterministic miniature X5 dataset in the real raw schema, for end-to-end tests.
-
-`make_raw(path, variant)` writes the five gzipped CSVs (`clients`, `products`, `purchases` as line
-items repeating transaction-level fields, `uplift_train`, `uplift_test`) and returns their SHA-256
-digests for a fixture config. The SMS effect is heterogeneous and known: clients who spent express
-points respond strongly, clients over 70 respond negatively.
-
-Edge cases present in every variant (must be *handled*): a 16-year-old (age band 14-17), an
-out-of-range age, a redemption after the as_of cutoff, a redemption before card issue, missing
-redemption dates. Variants that must *fail* the dbt build:
-
-    future_transaction   a purchase line dated after as_of
-    contradictory        two lines of one transaction disagree on purchase_sum
-    unmatched_product    a purchase line referencing an unknown product
-    null_transaction_ts  a purchase line with no timestamp
-"""
+"""Small deterministic dataset in the raw X5 schema, including edge cases and broken variants."""
 
 from __future__ import annotations
 
@@ -159,7 +144,6 @@ def make_raw(
 
 
 def make_historical_snapshot(snapshot: Path, manifest: Path, seed: int = 11) -> None:
-    """A tiny frozen 'historical test' with the same file layout as the real snapshot."""
     import json
 
     rng = np.random.default_rng(seed)

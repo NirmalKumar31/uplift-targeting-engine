@@ -1,15 +1,7 @@
-"""Real-browser checks of the static site and the Streamlit dashboard (Playwright + Chrome).
+"""Browser checks for the static site and the Streamlit app (Playwright + Chrome).
 
     uv run --group browser python scripts/browser_check.py --site docs/index.html \
-        [--streamlit http://localhost:8501] [--report docs/evidence/browser_check.json]
-
-Static site, desktop and phone width: every *required* chart (decided from results.json, not from
-the page) is present; each has non-decorative traces with finite numeric data and a working hover
-tooltip; no console errors; no horizontal page overflow. Decorative traces (e.g. the random line)
-are tagged `meta="decorative"` by build_site.py and exempt from the data check.
-Streamlit (optional): every page loads without a Streamlit exception and renders its charts or
-tables; the client search accepts regex metacharacters as literal text.
-Exits non-zero if any check fails.
+        --results data/marts/results.json [--streamlit http://localhost:8501]
 """
 
 from __future__ import annotations
@@ -51,7 +43,7 @@ HOVER_JS = """
 
 
 def required_charts(results_path: Path | None) -> list[str]:
-    """The charts the page must contain, decided from results.json - not from the page."""
+    """Charts the page must contain. Decided from results.json, not from the page."""
     if results_path is None:
         return list(REQUIRED_CHARTS)
     res = json.loads(results_path.read_text())
@@ -60,7 +52,6 @@ def required_charts(results_path: Path | None) -> list[str]:
 
 
 def evaluate_plots(plots: list[dict], hovers: dict[str, int], required: list[str]) -> dict:
-    """Pure verdict on what the browser measured (unit-testable without a browser)."""
     by_id = {p["id"]: p for p in plots}
     missing = [c for c in required if c not in by_id]
     empty = {}

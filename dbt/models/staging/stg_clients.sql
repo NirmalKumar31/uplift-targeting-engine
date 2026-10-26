@@ -1,10 +1,5 @@
--- One row per loyalty-card holder. Cleaning rules (counted in stg_data_quality):
--- * age outside 14-100 is implausible (raw values include -7 and 1901) -> NULL (unknown).
--- * first_redeem_date at/after the as_of cutoff is post-treatment information (dates run to
---   Nov 2019 and the SMS itself can trigger a redemption) -> NULL: not redeemed as of the cutoff.
--- * first_redeem_date before first_issue_date is impossible -> NULL and flagged; the client's
---   redemption date is unknown, not invented.
--- * first_issue_date at/after the cutoff fails the build (source test).
+-- Ages outside 14-100 -> NULL. Redemptions after as_of or before card issue -> NULL
+-- (post-SMS or impossible). Counts are in stg_data_quality.
 select
     client_id,
     first_issue_date,

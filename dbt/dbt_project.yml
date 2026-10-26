@@ -8,9 +8,7 @@ macro-paths: ["macros"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages", "logs"]
 
-# `as_of` (the feature cutoff) has no default here on purpose: `ute transform`/`ute marts` pass it
-# from configs/pipeline.yaml (dataset.as_of), the single source of truth. For a bare dbt call pass
-# it explicitly, e.g. --vars '{"as_of": "2019-03-19 00:00:00"}'.
+# as_of is passed in by the CLI from configs/pipeline.yaml.
 
 models:
   uplift_warehouse:

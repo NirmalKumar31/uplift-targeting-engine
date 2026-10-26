@@ -1,4 +1,3 @@
--- Counts behind every cleaning rule, so no exclusion is silent.
 select 'purchase lines at/after as_of (excluded; build fails first)' as check_name,
        count(*) filter (where transaction_datetime >= {{ as_of() }}) as n_rows
 from {{ source('raw', 'purchases') }}

@@ -1,4 +1,3 @@
--- Recency / frequency / monetary, basket shape and store loyalty (pre-cutoff transactions only).
 with store_counts as (
     select client_id, store_id, count(*) as n
     from {{ ref('stg_transactions') }}

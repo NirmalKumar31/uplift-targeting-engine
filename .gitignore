@@ -1,4 +1,4 @@
-# data & build outputs (raw data is downloaded by `ute ingest`, never committed)
+# data and build outputs
 data/raw/
 data/*.duckdb
 data/*.duckdb.wal

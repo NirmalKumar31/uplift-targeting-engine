@@ -1,12 +1,5 @@
-"""One-off, logged access to the historical test split (2026-10-25 remediation).
-
-Scores the already-selected 2026-10-24 development bundle (snapshot artifacts/model_dev.joblib),
-plus the response and random references refitted exactly as `pipeline.evaluate` did, on the
-historical test customers using the *pre-remediation* feature definitions, and freezes the
-per-customer scores in the snapshot. Later stages recompute corrected intervals from these frozen
-scores without touching features or refitting. No model, depth or setting is selected here.
-
-    uv run python scripts/freeze_historical_test_scores.py
+"""One-off, logged scoring of the historical test split, saved into the evidence snapshot so
+its intervals can be recomputed without refitting.
 """
 
 import hashlib

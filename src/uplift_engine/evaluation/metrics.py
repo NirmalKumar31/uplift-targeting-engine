@@ -1,25 +1,7 @@
-"""Uplift ranking metrics and fixed-score bootstrap inference.
+"""Uplift metrics and the customer-within-arm bootstrap.
 
-Metric definitions follow scikit-uplift (`qini_auc_score(negative_effect=True)`,
-`uplift_at_k(strategy="overall")`); `tests/fixtures/qini_reference.json` holds reference values
-produced by scikit-uplift itself (see `scripts/make_qini_reference.py`) and the tests check against
-them.
-
-Input contract. Every metric takes per-customer arrays `y` (binary outcome), `score` (finite
-ranking score) and `t` (binary treatment), one row per customer. Inputs that violate it raise
-`MetricInputError`. A metric that is mathematically undefined for a valid input (for example, the
-top-k slice contains no control customers, or every customer has the same outcome so the perfect
-Qini area equals the random area) raises `UndefinedMetricError` when called directly. Inside a
-bootstrap such replicates are recorded as NaN and *counted* (`n_undefined`); they are never shown
-as zeros.
-
-Bootstrap contract. `arm_bootstrap` resamples customers with replacement *within each treatment
-arm* (arm sizes fixed, everything else free: response counts vary), keeping each customer's
-(score, outcome, treatment) together. All statistics computed from one `ArmBootstrap` share the
-same draws, so paired differences are exact on identical policies. The resulting percentile
-intervals describe sampling variability of the *evaluation customers for fixed scores*. They do
-not include model fitting, calibration fitting or selection uncertainty, and pointwise curve bands
-are not simultaneous bands for a searched optimum.
+Definitions match scikit-uplift (qini_auc_score with negative_effect=True, uplift_at_k with
+strategy="overall"). Intervals cover sampling of evaluation customers for fixed scores only.
 """
 
 from __future__ import annotations
@@ -32,15 +14,14 @@ import pandas as pd
 
 
 class MetricInputError(ValueError):
-    """The inputs violate the metric contract (lengths, binary values, finiteness, support)."""
+    """Inputs violate the metric contract."""
 
 
 class UndefinedMetricError(ValueError):
-    """The metric is undefined for these (valid) inputs."""
+    """Metric is undefined for these inputs."""
 
 
 def validate(y, score, t, *, need_both_arms: bool = True):
-    """Return float arrays after checking the input contract."""
     y, score, t = (np.asarray(a) for a in (y, score, t))
     if not (y.ndim == score.ndim == t.ndim == 1):
         raise MetricInputError("y, score and t must be one-dimensional")
@@ -67,9 +48,7 @@ def _check_fraction(k: float, name: str = "k") -> None:
         raise MetricInputError(f"{name} must be in (0, 1], got {k}")
 
 
-# --------------------------------------------------------------------------- metrics
 def qini_curve(y, score, t) -> tuple[np.ndarray, np.ndarray]:
-    """Qini curve: incremental responders among the top n, at every distinct score threshold."""
     y, score, t = validate(y, score, t)
     return _qini_curve(y, score, t)
 
@@ -88,7 +67,7 @@ def _qini_curve(y, score, t):
 
 
 def qini_auc(y, score, t) -> float:
-    """Normalised area between the Qini curve and the random line (1 = perfect, 0 = random)."""
+    """Normalised Qini AUC: 0 = random ranking, 1 = perfect."""
     y, score, t = validate(y, score, t)
     return _qini_auc(y, score, t)
 
@@ -104,7 +83,7 @@ def _qini_auc(y, score, t) -> float:
 
 
 def uplift_at_k(y, score, t, k: float) -> float:
-    """Treated minus control response rate among the top k share of clients by score."""
+    """Treated minus control response rate in the top k share by score."""
     y, score, t = validate(y, score, t)
     _check_fraction(k)
     out = _uplift_by_depth(y, score, t, np.array([k]))[0]
@@ -114,7 +93,7 @@ def uplift_at_k(y, score, t, k: float) -> float:
 
 
 def uplift_by_depth(y, score, t, depths) -> np.ndarray:
-    """uplift_at_k for many depths in one sort. NaN where the slice lacks an arm (undefined)."""
+    """uplift_at_k for several depths at once; NaN where a slice lacks an arm."""
     y, score, t = validate(y, score, t)
     depths = np.asarray(depths, dtype=float)
     for d in depths:
@@ -135,16 +114,12 @@ def _uplift_by_depth(y, score, t, depths):
 
 
 def ate(y, t) -> float:
-    """Difference in mean outcome between arms."""
     y, _, t = validate(y, np.zeros(len(y)), t)
     return float(y[t == 1].mean() - y[t == 0].mean())
 
 
 def decile_table(y, score, t, pred: np.ndarray | None = None, n_bins: int = 10) -> pd.DataFrame:
-    """Observed (and optionally predicted) uplift per score bin, 1 = highest scores.
-
-    `observed_se` is the usual two-sample binomial standard error, NaN when an arm is empty.
-    """
+    """Observed uplift per score decile (1 = highest scores)."""
     y, score, t = validate(y, score, t)
     rank = pd.Series(score).rank(method="first", ascending=False).to_numpy()
     decile = np.ceil(rank / len(score) * n_bins).astype(int)
@@ -171,7 +146,6 @@ def decile_table(y, score, t, pred: np.ndarray | None = None, n_bins: int = 10) 
     return pd.DataFrame(rows)
 
 
-# --------------------------------------------------------------------------- bootstrap
 @dataclass
 class Interval:
     estimate: float
@@ -186,7 +160,7 @@ class Interval:
 
 @dataclass
 class ArmBootstrap:
-    """Reusable customer-within-arm bootstrap draws for one evaluation sample."""
+    """Bootstrap draws that resample customers within each treatment arm."""
 
     t: np.ndarray
     n_boot: int
@@ -222,7 +196,6 @@ class ArmBootstrap:
         }
 
     def replicates(self, stat: Callable[[np.ndarray], float | np.ndarray]) -> np.ndarray:
-        """stat(idx) for every draw; UndefinedMetricError becomes NaN."""
         out = []
         for idx in self.indices:
             try:
@@ -254,7 +227,6 @@ def bootstrap(
     alpha: float = 0.05,
     draws: ArmBootstrap | None = None,
 ) -> Interval:
-    """Percentile CI for metric(y, score, t) under the customer-within-arm bootstrap."""
     y, score, t = validate(y, score, t)
     draws = draws or arm_bootstrap(t, n_boot, seed, alpha)
     reps = draws.replicates(lambda i: metric(y[i], score[i], t[i]))
@@ -264,7 +236,7 @@ def bootstrap(
 @dataclass
 class PairedResult:
     difference: Interval
-    frac_positive: float  # share of bootstrap replicates with a > b; not a probability of truth
+    frac_positive: float
     frac_zero: float
 
 
@@ -279,7 +251,7 @@ def paired_bootstrap(
     alpha: float = 0.05,
     draws: ArmBootstrap | None = None,
 ) -> PairedResult:
-    """CI for metric(a) - metric(b) on shared customer draws."""
+    """Interval for metric(a) - metric(b) on shared draws."""
     y, score_a, t = validate(y, score_a, t)
     _, score_b, _ = validate(y, score_b, t)
     draws = draws or arm_bootstrap(t, n_boot, seed, alpha)
@@ -296,7 +268,7 @@ def paired_bootstrap(
 
 
 def random_noise_floor(y, t, n_rankings: int = 200, seed: int = 0) -> tuple[float, float]:
-    """Central 95% range of Qini AUC for random rankings of these customers (fixed outcomes)."""
+    """95% range of Qini AUC for random rankings."""
     y, _, t = validate(y, np.zeros(len(y)), t)
     rng = np.random.default_rng(seed)
     vals = [_qini_auc(y, rng.random(len(y)), t) for _ in range(n_rankings)]

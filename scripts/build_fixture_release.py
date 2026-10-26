@@ -1,10 +1,4 @@
-"""Build a complete miniature release from the deterministic raw fixture (no network, ~1 min).
-
-    uv run python scripts/build_fixture_release.py OUT_DIR
-
-OUT_DIR gets raw/, a warehouse, releases/ (with an ACTIVE release) and marts/ - the same layout
-the real pipeline produces. Used by CI for the browser check and the API container test.
-"""
+"""Build a small release from the raw test fixture: `build_fixture_release.py DIR`."""
 
 import sys
 from pathlib import Path

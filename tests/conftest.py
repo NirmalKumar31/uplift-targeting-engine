@@ -1,5 +1,3 @@
-"""Shared fixtures: an in-memory experiment with a known effect, and a fixture project config."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +11,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def synthetic_experiment(n: int = 4000, seed: int = 0) -> pd.DataFrame:
-    """Uplift rises with `express_points_spent` and is negative for the oldest clients."""
+    """Uplift rises with express_points_spent and is negative for clients over 70."""
     rng = np.random.default_rng(seed)
     df = pd.DataFrame(
         {
@@ -40,7 +38,7 @@ def experiment() -> pd.DataFrame:
 
 
 def write_fixture_config(tmp: Path, files: dict[str, str], **overrides) -> Path:
-    """A fast pipeline config whose data/output paths all live under `tmp`."""
+    """Small, fast config with all paths under `tmp`."""
     raw = yaml.safe_load((REPO / "configs" / "pipeline.yaml").read_text())
     raw["paths"] = {
         "raw_dir": str(tmp / "raw"),

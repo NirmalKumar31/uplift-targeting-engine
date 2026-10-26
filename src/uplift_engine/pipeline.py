@@ -1,20 +1,7 @@
-"""Pipeline stages. All write run-tagged history into the warehouse and files into the release.
+"""Pipeline stages: assess, deploy, historical and explain.
 
-The policy procedure (`fit_procedure`), defined once and used by both `assess` and `deploy`:
-
-    1. inner K-fold cross-fitting of every candidate learner on the training customers
-    2. champion = uplift learner or top-k ensemble with the highest inner out-of-fold Qini
-    3. calibrator = isotonic map from the champion's inner OOF scores to observed uplift
-    4. learner refitted on all training customers
-    5. action: text a customer iff calibrated effect x margin > sms_cost (strictly greater)
-    6. comparator: response model, refitted; texts the top share chosen on its own inner OOF
-       value curve (so it is optimised on training data too, not forced to the uplift share)
-
-Stages:
-    assess      retrospective internal validation of the whole procedure in outer folds
-    deploy      the procedure on all labelled customers -> bundle, scores, frozen campaign
-    historical  corrected intervals for the reused 2026-10-24 test split (frozen scores)
-    explain     surrogate (held-out fidelity) + exact S-learner log-odds attribution check
+fit_procedure is the full policy: inner-CV model selection, calibration on out-of-fold scores,
+refit, and the rule calibrated_effect * margin > sms_cost.
 """
 
 from __future__ import annotations
@@ -65,7 +52,6 @@ ACTION_SEMANTICS = (
 METRIC_NAMES = ["qini_auc"] + [f"uplift_at_{int(k * 100)}" for k in DEPTH_KS]
 
 
-# --------------------------------------------------------------------------- the procedure
 @dataclass
 class Procedure:
     champion: str
@@ -86,7 +72,6 @@ def _crossfit(name, X, t, y, folds, params, seed) -> np.ndarray:
 
 
 def _best_share(y, score, t, margin, cost) -> float:
-    """Share with the highest point-estimated value on a ranking (0 = no-send if none > 0)."""
     depths = SHARE_GRID[1:]
     u = m._uplift_by_depth(y, score, t, depths)
     value = depths * (margin * u - cost)
@@ -128,7 +113,6 @@ def fit_procedure(
 
 
 def _ranking_replicates(y, scores: dict[str, np.ndarray], t, draws: m.ArmBootstrap):
-    """Qini and uplift@k for every model on the *same* draws (for intervals and paired diffs)."""
     ks = np.array(DEPTH_KS)
 
     def stat(yy, ss, tt):
@@ -178,7 +162,7 @@ def _curve_points(y, score, t, model: str, source: str, n_points: int = 101) -> 
 
 
 def _reliability(effect, y, t, n_bins: int = 10) -> pd.DataFrame:
-    """Predicted (calibrated) vs observed uplift in quantile bins of the predicted effect."""
+    """Predicted vs observed uplift in quantile bins of the predicted effect."""
     df = pd.DataFrame({"e": effect, "y": y, "t": t})
     df["bin"] = pd.qcut(df.e.rank(method="first"), n_bins, labels=False) + 1
     rows = []
@@ -222,9 +206,8 @@ def _safe_value(y, t, sel, margin, cost) -> float:
         return np.nan
 
 
-# --------------------------------------------------------------------------- assess
 def assess(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> dict:
-    """Outer-fold retrospective validation of the complete procedure (see module docstring)."""
+    """Validate the full procedure in outer folds."""
     release_id = building_release(cfg, con)
     econ, seed = cfg.economics, cfg.experiment.seed
     with Run(con, cfg, "assess", release_id) as run:
@@ -363,9 +346,8 @@ def assess(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> dict:
         return {"values": values, "differences": diffs, "folds": pd.DataFrame(fold_rows)}
 
 
-# --------------------------------------------------------------------------- deploy
 def holdout_draw(campaign_id: str, client_ids) -> np.ndarray:
-    """Deterministic uniform [0, 1) per (campaign, client): order- and population-independent."""
+    """Deterministic uniform draw per (campaign, client)."""
     return np.array(
         [
             int(hashlib.sha256(f"{campaign_id}:{c}".encode()).hexdigest()[:16], 16) / 2**64
@@ -578,13 +560,8 @@ def deploy(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.DataFra
         return scores
 
 
-# --------------------------------------------------------------------------- historical
 def historical_available(cfg: Config) -> tuple[bool, str]:
-    """Whether the frozen historical evidence exists locally and matches its committed manifest.
-
-    It is optional: a release without it is complete, and shows historical evidence as
-    unavailable. Checked before any expensive stage runs.
-    """
+    """Whether the frozen historical scores exist and match the committed manifest."""
     snap, mpath = cfg.paths.historical_snapshot, cfg.paths.historical_manifest
     path = snap / "historical_test_scores.parquet"
     if not mpath.exists():
@@ -602,12 +579,7 @@ def historical_available(cfg: Config) -> tuple[bool, str]:
 
 
 def historical(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.DataFrame:
-    """Corrected intervals for the 2026-10-24 bundle on the reused test split.
-
-    Uses the per-customer scores frozen in the evidence snapshot (verified against the committed
-    manifest); does not read features or refit. Policies are the historical ones: champion and
-    response at the champion's development-chosen 41% depth, and the expected random policy.
-    """
+    """Recompute intervals for the old bundle from its frozen test-set scores."""
     release_id = building_release(cfg, con)
     snap, mpath = cfg.paths.historical_snapshot, cfg.paths.historical_manifest
     with Run(con, cfg, "historical", release_id) as run:
@@ -671,7 +643,6 @@ def historical(cfg: Config, con: duckdb.DuckDBPyConnection, log=print) -> pd.Dat
         return table
 
 
-# --------------------------------------------------------------------------- explain
 def load_release_bundle(cfg: Config, con, release_id: str) -> dict:
     path = release_dir(cfg, release_id) / "bundle.joblib"
     if not path.exists():
@@ -699,14 +670,7 @@ def load_release_bundle(cfg: Config, con, release_id: str) -> dict:
 def explain(
     cfg: Config, con: duckdb.DuckDBPyConnection, n_rows: int = 50_000, log=print
 ) -> pd.DataFrame:
-    """Attribution of the *raw uplift score* (not the calibrated effect or profit).
-
-    A LightGBM surrogate is fitted on 70% of a sample and its fidelity measured on the other 30%
-    (held-out R^2, RMSE, error by score decile). TreeSHAP of the surrogate on the held-out rows
-    gives the importance shown in the dashboard. For an S-learner champion, exact treatment-on
-    minus treatment-off TreeSHAP contributions are also computed on the log-odds scale, where they
-    are additive, and the additivity error is recorded.
-    """
+    """Attribute the raw uplift score with a surrogate model checked on held-out rows."""
     release_id = building_release(cfg, con)
     seed = cfg.experiment.seed
     bundle = load_release_bundle(cfg, con, release_id)

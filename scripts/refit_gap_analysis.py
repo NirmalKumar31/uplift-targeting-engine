@@ -1,18 +1,6 @@
-"""Why does the full-data refit select a different share than outer-fold validation?
+"""Compare the eligible share of the full-data refit with outer-fold validation.
 
-    uv run python scripts/refit_gap_analysis.py [--out docs/evidence/refit_gap_analysis.json]
-
-Decomposes the eligible-share gap for the ACTIVE release on the labelled customers:
-
-1. OOF-to-refit transfer on the full data: the deployed calibrator applied to (a) the champion's
-   5-fold out-of-fold scores on all labelled customers - the scores it was fitted on - and (b) the
-   refitted learner's scores on the same customers.
-2. Calibrator shape near the threshold: the isotonic steps around the break-even uplift, and the
-   eligible share for break-even values within +/-25% of the configured one.
-3. Training size and champion choice: per-outer-fold champions and eligible shares (160k
-   training customers) next to the full refit (200k).
-
-Diagnostics only; nothing is refitted into the release.
+uv run python scripts/refit_gap_analysis.py
 """
 
 from __future__ import annotations

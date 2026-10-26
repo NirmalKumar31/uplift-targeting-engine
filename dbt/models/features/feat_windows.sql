@@ -1,6 +1,4 @@
--- Short-horizon activity and momentum. A window of N days is the half-open interval
--- [as_of - N days, as_of) in elapsed time; transactions are timestamps without timezone (store
--- local time as delivered). Rows at/after as_of never reach this model (stg_purchase_lines).
+-- Windows are [as_of - N days, as_of).
 {% set w = {7: "7d", 14: "14d", 30: "30d", 60: "60d"} %}
 with tx as (
     select * from {{ ref('stg_transactions') }} where transaction_at < {{ as_of() }}

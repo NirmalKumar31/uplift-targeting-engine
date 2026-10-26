@@ -3,11 +3,9 @@ name = "uplift-targeting-engine"
 version = "2.0.0"
 description = "Causal uplift modeling for promotion targeting: DuckDB + dbt feature warehouse, cross-fitted meta-learners, outer-fold policy validation, a scoring API and a BI dashboard."
 readme = "README.md"
-# Supported and tested: CPython 3.12 from a source checkout (see README "Execution modes").
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
-# Minimums are the lowest versions the test suite has been run against
-# (`uv run --isolated --resolution lowest-direct --all-extras pytest`); see docs/AUDIT_REMEDIATION.md.
+# Minimums are tested with `uv run --isolated --resolution lowest-direct`.
 dependencies = [
     "duckdb>=1.1",
     "lightgbm>=4.5",
@@ -18,14 +16,14 @@ dependencies = [
     "pyyaml>=6.0.1",
     "scikit-learn>=1.5",
     "scipy>=1.13",
-    "typer>=0.15.4",  # "Path | None" options + compatibility with current Click
+    "typer>=0.15.4",
     "rich>=13.7",
 ]
 
 [project.optional-dependencies]
 warehouse = ["dbt-duckdb>=1.10"]
 api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
-dashboard = ["streamlit>=1.52", "plotly>=6.0"]  # st.metric(delta_arrow=) is 1.52+
+dashboard = ["streamlit>=1.52", "plotly>=6.0"]
 all = ["uplift-targeting-engine[warehouse,api,dashboard]"]
 
 [project.scripts]
@@ -64,7 +62,6 @@ source = ["uplift_engine"]
 branch = true
 
 [tool.ruff.lint.per-file-ignores]
-# The page template is HTML; wrapping it would change the generated markup.
 "scripts/build_site.py" = ["E501"]
 
 [tool.ruff.lint.isort]

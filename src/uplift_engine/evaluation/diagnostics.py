@@ -1,10 +1,4 @@
-"""Seeded repeated-experiment coverage diagnostic for the customer-within-arm bootstrap.
-
-Each replication draws a fresh randomised experiment from a known model, computes the percentile
-interval for (a) the average treatment effect and (b) the value of a fixed targeting policy, and
-records whether the interval contains the true value. Coverage is reported with its Monte Carlo
-standard error; it is a diagnostic, not a pass/fail threshold.
-"""
+"""Coverage of bootstrap intervals over simulated experiments with a known effect."""
 
 from __future__ import annotations
 
@@ -28,7 +22,7 @@ def coverage(
     x_pop = rng.random(200_000)
     tau_pop = effect + heterogeneity * (x_pop - 0.5)
     true_ate = float(tau_pop.mean())
-    top = x_pop > 0.7  # fixed policy: text customers with x > 0.7
+    top = x_pop > 0.7
     true_value = float(1000 * top.mean() * (margin * tau_pop[top].mean() - sms_cost))
 
     hits_ate, hits_val, widths = [], [], []

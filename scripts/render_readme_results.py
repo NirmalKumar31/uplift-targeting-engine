@@ -1,10 +1,4 @@
-"""Regenerate the README results block from the active release's results.json.
-
-    uv run python scripts/render_readme_results.py [--marts data/marts]
-
-Replaces the text between `<!-- results:start -->` and `<!-- results:end -->` in README.md, so
-every number in the README is traceable to results.json rather than typed by hand.
-"""
+"""Rewrite the README results block from data/marts/results.json."""
 
 from __future__ import annotations
 

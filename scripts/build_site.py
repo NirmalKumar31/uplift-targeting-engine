@@ -1,10 +1,6 @@
-"""Build a static, shareable snapshot of the dashboard for GitHub Pages.
+"""Build the static dashboard page for GitHub Pages from the active release's marts.
 
-    uv run python scripts/build_site.py [--marts data/marts] [--out docs/index.html]
-
-Every number comes from the active release export (`results.json` and the parquet marts). The
-page loads plotly.js exactly once, from the CDN URL that the installed Plotly package emits for its
-own bundled plotly.js version, so the figure serialization and the renderer always match.
+uv run python scripts/build_site.py [--marts data/marts] [--out docs/index.html]
 """
 
 from __future__ import annotations
@@ -20,7 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 ROOT = Path(__file__).resolve().parents[1]
-# Stable DOM ids per chart; scripts/browser_check.py requires them (independently of the page).
+# Chart ids checked by scripts/browser_check.py.
 CHART_IDS = {
     "Policy value, outer-fold validation": "policy-value",
     "Calibration on held-out folds": "calibration",

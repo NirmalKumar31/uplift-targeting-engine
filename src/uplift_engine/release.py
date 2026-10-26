@@ -1,29 +1,7 @@
-"""Versioned releases: validation, a single commit point, and recovery.
+"""Releases: validation, activation and recovery.
 
-A release directory is everything consumers read, produced by one consistent generation of runs:
-
-    releases/<release_id>/
-        bundle.joblib                 model + calibrator + contract + economics (+ deploy run id)
-        scores.parquet                every customer's score and eligibility (+ producer_run_id)
-        campaign_assignment.parquet   frozen campaign (+ producer_run_id)
-        assessment_predictions.parquet  outer-fold predictions (+ producer_run_id)
-        marts/                        BI marts + results.json + PRODUCERS.json + RELEASE.json
-        results.json                  compact results artifact
-        manifest.json                 runs, lineage, file hashes (written last, before commit)
-
-Commit point. `releases/ACTIVE` is replaced with one atomic `os.replace`. Before it, nothing any
-consumer reads has changed; after it, the API and the dashboard both resolve the new release
-(each re-reads the pointer and reads only that immutable directory). Everything after the commit
-is *derived* state, re-derivable from the pointer at any time by `reconcile`:
-
-    * the committed dashboard export `data/marts/` (a copy for fresh clones and Docker images; it
-      is not an authority when a pointer exists),
-    * `meta.releases` statuses.
-
-A crash or I/O error before the commit leaves the previous release fully active; after it, the new
-release is fully active and `reconcile` (run automatically by `ute release`/`ute status`/`ute run`)
-brings the export and statuses in line. `releases/JOURNAL.json` records the phase of the last
-activation for diagnosis.
+releases/ACTIVE is the single commit point; the API and dashboard both read it. The data/marts
+export and release statuses are derived from it by reconcile().
 """
 
 from __future__ import annotations
@@ -97,7 +75,6 @@ def building_release(cfg: Config, con: duckdb.DuckDBPyConnection, create: bool =
 
 
 def latest_runs(con, release_id: str) -> dict[str, dict]:
-    """Latest run of each stage in a release (any status), with full lineage."""
     df = con.execute(
         "SELECT * FROM meta.runs WHERE release_id = ? ORDER BY started_at", [release_id]
     ).df()
@@ -108,18 +85,13 @@ def latest_runs(con, release_id: str) -> dict[str, dict]:
     return out
 
 
-def stage_runs(con, release_id: str) -> dict[str, dict]:  # backwards-compatible name
-    return latest_runs(con, release_id)
-
-
 def expected_marts_parents(runs: dict[str, dict]) -> list[str]:
     stages = [s for s in ("assess", "deploy", "explain", "historical") if s in runs]
     return sorted(runs[s]["run_id"] for s in stages)
 
 
 def validate(cfg: Config, con, release_id: str) -> dict:
-    """Check status, lineage completeness and equality, parentage, and that every file was
-    produced by exactly the runs the release names. Raises ReleaseError listing every problem."""
+    """Check runs, lineage and file producers for a release; raise ReleaseError on any problem."""
     runs = latest_runs(con, release_id)
     problems = []
     for stage in REQUIRED_STAGES:
@@ -247,7 +219,6 @@ def _check_producers(rdir: Path, runs: dict[str, dict]) -> list[str]:
     return problems
 
 
-# --------------------------------------------------------------------------- activation
 def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + f".tmp{os.getpid()}")
     with tmp.open("w") as fh:
@@ -272,7 +243,6 @@ def pointer_path(cfg: Config) -> Path:
 
 
 def activate(cfg: Config, con, release_id: str) -> dict:
-    """Validate, finalize the immutable release directory, then commit with one os.replace."""
     reconcile(cfg, con)
     try:
         manifest = validate(cfg, con, release_id)
@@ -294,16 +264,15 @@ def activate(cfg: Config, con, release_id: str) -> dict:
     )
     _atomic_write(rdir / "manifest.json", json.dumps(manifest, indent=2))
 
-    # ---- commit point: the only step that changes what consumers read -------------------------
+    # Commit point.
     _atomic_write(
         pointer_path(cfg),
         json.dumps({"release_id": release_id, "activated_at": datetime.now(UTC).isoformat()}),
     )
     _journal(cfg, release_id, "committed")
-    # ---- derived state (re-derivable from the pointer) ----------------------------------------
     try:
         reconcile(cfg, con)
-    except Exception as exc:  # the release IS active; only derived copies lag behind
+    except Exception as exc:
         _journal(cfg, release_id, "committed-reconcile-pending", error=repr(exc))
         warnings.warn(
             f"release {release_id} is active, but deriving the export/statuses "
@@ -325,7 +294,7 @@ def active_release(cfg: Config) -> tuple[str, Path]:
 
 
 def sync_export(cfg: Config, release_id: str) -> None:
-    """Make data/marts a copy of the release's marts (idempotent; staged then swapped)."""
+    """Copy the release's marts into data/marts."""
     rdir = release_dir(cfg, release_id)
     marts = cfg.paths.marts_dir
     staged, prev = marts.with_name("marts.next"), marts.with_name("marts.prev")
@@ -347,9 +316,9 @@ def export_release_id(cfg: Config) -> str | None:
 
 
 def reconcile(cfg: Config, con=None) -> str | None:
-    """Re-derive everything that follows the commit point from `releases/ACTIVE`."""
+    """Bring the export and release statuses in line with releases/ACTIVE."""
     marts, prev = cfg.paths.marts_dir, cfg.paths.marts_dir.with_name("marts.prev")
-    if not marts.exists() and prev.exists():  # interrupted export swap: restore first
+    if not marts.exists() and prev.exists():  # interrupted swap
         prev.rename(marts)
     try:
         rid, _ = active_release(cfg)
@@ -374,12 +343,8 @@ def reconcile(cfg: Config, con=None) -> str | None:
     return rid
 
 
-def restore_marts(cfg: Config) -> None:  # kept for callers of the old name
-    reconcile(cfg)
-
-
 def verify_file(rdir: Path, name: str) -> Path:
-    """Check a release file against its manifest hash before use."""
+    """Check a release file against its manifest hash."""
     manifest = json.loads((rdir / "manifest.json").read_text())
     path = rdir / name
     if not path.exists():

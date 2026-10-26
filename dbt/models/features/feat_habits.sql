@@ -1,4 +1,3 @@
--- When a client shops: time of day and weekday mix.
 select
     client_id,
     avg(hour(transaction_at)) as mean_hour,

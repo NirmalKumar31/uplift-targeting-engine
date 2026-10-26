@@ -1,23 +1,7 @@
-"""Scoring and campaign-authorization API over the *active release*.
+"""FastAPI service over the active release.
 
-    uvicorn uplift_engine.api:app --port 8000
-
-Endpoints
-    GET  /health                         liveness only (the process is up)
-    GET  /ready                          readiness: an active release with a hash-verified bundle
-    GET  /model                          champion, feature contract, economics, action semantics
-    POST /score                          features -> score, calibrated effect, ECONOMIC ELIGIBILITY
-    GET  /clients/{client_id}            batch score of a known customer in the active release
-    GET  /campaigns/{campaign_id}        frozen campaign manifest
-    POST /campaigns/{campaign_id}/authorize   may these customers be texted in this campaign?
-
-`/score` never authorizes a send: `economically_eligible` only says the calibrated effect clears
-cost/margin. Authorization comes from the frozen campaign assignment (eligible AND not in the
-holdout), which only `/campaigns/{id}/authorize` and `ute export-send-list` read. Customers outside
-the frozen campaign population are not authorized; scoring them does not add them to it.
-
-Release activation: the active-release pointer is re-read on each request and artifacts are cached
-per release id, so a newly activated release is served without a restart.
+/score returns economic eligibility only; sends are authorized per campaign via
+/campaigns/{id}/authorize, which honours the frozen holdout.
 """
 
 from __future__ import annotations
@@ -194,8 +178,7 @@ def client(client_id: str) -> dict[str, Any]:
 
 
 def jsonable(value: Any) -> Any:
-    """Serialization boundary for warehouse scalars: every missing marker (None, NaN, pd.NA,
-    NaT) becomes JSON null; NumPy scalars become Python scalars; timestamps become ISO strings."""
+    """Convert warehouse scalars to JSON-safe values (all missing markers become None)."""
     if value is None:
         return None
     if isinstance(value, (pd.Timestamp, np.datetime64)):
@@ -203,7 +186,7 @@ def jsonable(value: Any) -> Any:
     try:
         if pd.isna(value):
             return None
-    except (TypeError, ValueError):  # array-like values are not scalars
+    except (TypeError, ValueError):
         pass
     if isinstance(value, np.generic):
         value = value.item()

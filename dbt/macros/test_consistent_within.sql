@@ -1,6 +1,4 @@
-{# Row-grain guard: every listed column takes exactly one value (nulls included) within each group.
-   purchases.csv repeats transaction-level fields on every line item; staging collapses them with
-   any_value(), which is only safe when this test passes. #}
+{# Each column has one value per group (nulls included). #}
 {% test consistent_within(model, group_by, columns) %}
 select {{ group_by | join(', ') }}
 from {{ model }}

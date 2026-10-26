@@ -1,4 +1,4 @@
-"""Download the raw X5 files (checksum-verified) and land them in the warehouse `raw` schema."""
+"""Download the raw X5 files and load them into the `raw` schema."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import duckdb
 from uplift_engine.config import Config
 from uplift_engine.warehouse import connect
 
-# Explicit column types: DuckDB's sniffer would otherwise guess per file and could drift.
+# Explicit types so DuckDB doesn't guess them per file.
 RAW_SCHEMAS: dict[str, dict[str, str]] = {
     "clients": {
         "client_id": "VARCHAR",
@@ -67,7 +67,6 @@ def sha256(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def download(cfg: Config, force: bool = False) -> list[Path]:
-    """Fetch every configured file into raw_dir and verify its SHA-256."""
     cfg.paths.raw_dir.mkdir(parents=True, exist_ok=True)
     paths = []
     for name, expected in cfg.dataset.files.items():
@@ -86,12 +85,7 @@ def download(cfg: Config, force: bool = False) -> list[Path]:
 
 
 def load_raw(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[str, int]:
-    """(Re)create raw.<table> from each file, hashing the bytes actually loaded.
-
-    A file whose SHA-256 differs from the configured digest is refused here, at the loading
-    boundary, not only at download time. Every load is logged to meta.ingest_log under one
-    ingest_id with the expected and actual digests.
-    """
+    """Load every raw file, refusing any whose SHA-256 differs from the config."""
     con = con or connect(cfg)
     con.execute("CREATE SCHEMA IF NOT EXISTS raw")
     con.execute("CREATE SCHEMA IF NOT EXISTS meta")

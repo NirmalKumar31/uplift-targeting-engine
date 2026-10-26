@@ -1,9 +1,4 @@
-"""Release identity, activation faults and lineage generations, on real fixture releases.
-
-Every check asks the *consumers* which release they serve: the API (`/ready`, campaign
-authorization), the dashboard data resolver, and the committed export - and requires them to
-agree after successful activation and after a fault injected at each boundary.
-"""
+"""Release activation, fault injection and lineage checks on real fixture releases."""
 
 from __future__ import annotations
 
@@ -39,7 +34,7 @@ def project(tmp_path_factory):
 
 
 def consumers(cfg) -> dict:
-    """Which release each consumer serves right now."""
+    """Which release the API, dashboard, results and export are serving."""
     from fastapi.testclient import TestClient
 
     from uplift_engine import api
@@ -64,7 +59,7 @@ def consumers(cfg) -> dict:
 
 
 def stage_new_release(config) -> str:
-    """Build a complete release B next to the active one, without activating it."""
+    """Build a complete release without activating it."""
     cfg = load_config(config, root=REPO)
     with duckdb.connect(str(cfg.paths.warehouse)) as con:
         rid = release.new_release(cfg, con)

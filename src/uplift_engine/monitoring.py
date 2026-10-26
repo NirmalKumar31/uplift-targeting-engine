@@ -1,15 +1,4 @@
-"""Covariate balance between experiment arms, and a historical population comparison (PSI).
-
-Balance. The SMS was assigned at random according to the dataset documentation; that is an
-assumption about the design, not something these numbers prove. What is measured: for numeric
-features, the standardised mean difference (SMD) on non-missing values; for categorical features,
-the SMD of each level's indicator; for every feature, the SMD of its missingness indicator.
-|SMD| < 0.1 is the conventional balance threshold.
-
-PSI. Compares experiment customers (training population) with the non-experiment customers of the
-*same historical snapshot*. It is a diagnostic of population similarity, not temporal
-monitoring of a new campaign and not a deployment gate.
-"""
+"""Covariate balance between arms and population stability (PSI)."""
 
 from __future__ import annotations
 
@@ -79,7 +68,6 @@ def _numeric(X: pd.DataFrame) -> pd.DataFrame:
 
 
 def psi(expected: pd.Series, actual: pd.Series, n_bins: int = 10) -> float:
-    """Population stability index over reference-decile bins plus a missing-value bin."""
     expected, actual = expected.astype(float), actual.astype(float)
     ref = expected.dropna()
     if ref.nunique() <= n_bins:

@@ -1,5 +1,4 @@
-{# Marts read exactly the producer runs that `ute marts` passes as vars (<stage>_run), the same
-   ids recorded in PRODUCERS.json and in the marts run's parent_run_ids. #}
+{# Marts read the exact producer run ids passed by `ute marts`. #}
 {% macro release_run(stage) -%}
     '{{ var(stage ~ "_run") }}'
 {%- endmacro %}

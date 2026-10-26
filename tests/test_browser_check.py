@@ -1,5 +1,3 @@
-"""The browser oracle must reject missing charts, empty data traces and missing hover."""
-
 import importlib.util
 import shutil
 import sys

@@ -1,9 +1,4 @@
-"""Uplift meta-learners on a shared LightGBM base.
-
-Every learner estimates tau(x) = P(buy | x, SMS) - P(buy | x, no SMS) and exposes
-`fit(X, t, y)` / `predict(X)`. The experiment is randomised, so the propensity is the constant
-treated share; it is still estimated from the data rather than hard-coded to 0.5.
-"""
+"""Uplift meta-learners on a shared LightGBM base."""
 
 from __future__ import annotations
 
@@ -31,7 +26,6 @@ def _proba(model: lgb.LGBMClassifier, X: pd.DataFrame) -> np.ndarray:
 
 class UpliftLearner(ABC):
     name: ClassVar[str]
-    #: True for baselines that are not uplift estimates (excluded from ensembles).
     is_baseline: ClassVar[bool] = False
 
     def __init__(self, params: dict[str, Any] | None = None, seed: int = 42):
@@ -46,8 +40,6 @@ class UpliftLearner(ABC):
 
 
 class RandomLearner(UpliftLearner):
-    """Sanity floor: a random ranking."""
-
     name = "random"
     is_baseline = True
 
@@ -59,7 +51,7 @@ class RandomLearner(UpliftLearner):
 
 
 class ResponseLearner(UpliftLearner):
-    """The traditional approach: rank by P(buy | SMS). Targets likely buyers, not persuadables."""
+    """Ranks by P(buy | SMS): the traditional likely-buyer approach."""
 
     name = "response"
     is_baseline = True
@@ -74,7 +66,7 @@ class ResponseLearner(UpliftLearner):
 
 
 class SLearner(UpliftLearner):
-    """One model with treatment as a feature; uplift = f(x, 1) - f(x, 0)."""
+    """One model with treatment as a feature."""
 
     name = "s_learner"
 
@@ -87,7 +79,7 @@ class SLearner(UpliftLearner):
 
 
 class TLearner(UpliftLearner):
-    """Separate response models per arm; uplift = mu1(x) - mu0(x)."""
+    """One model per arm."""
 
     name = "t_learner"
 
@@ -105,7 +97,7 @@ class TLearner(UpliftLearner):
 
 
 class XLearner(UpliftLearner):
-    """Kunzel et al. (2019): impute individual effects per arm, regress, blend by propensity."""
+    """Kunzel et al. (2019)."""
 
     name = "x_learner"
 
@@ -124,12 +116,7 @@ class XLearner(UpliftLearner):
 
 
 class ClassTransformation(UpliftLearner):
-    """Jaskowski & Jaroszewicz (2012): z = 1 if (SMS and bought) or (no SMS and didn't).
-
-    uplift = 2 P(z=1 | x) - 1 holds when treatment is 50/50. Arms are reweighted to equal total
-    weight (w = 0.5 / e for treated, 0.5 / (1 - e) for control), which restores that condition for
-    any treated share e in (0, 1).
-    """
+    """Jaskowski & Jaroszewicz (2012). Arms are reweighted to 50/50 so 2P(z) - 1 holds."""
 
     name = "class_transformation"
 
@@ -148,7 +135,7 @@ class ClassTransformation(UpliftLearner):
 
 
 class DRLearner(UpliftLearner):
-    """Kennedy (2023) doubly-robust learner with 2-fold cross-fitted outcome models."""
+    """Doubly robust learner with 2-fold cross-fitted outcome models."""
 
     name = "dr_learner"
 
@@ -169,7 +156,7 @@ class DRLearner(UpliftLearner):
 
 
 class EnsembleLearner(UpliftLearner):
-    """Mean of member uplift estimates (all in probability points, so averaging keeps scale)."""
+    """Mean of member uplift estimates."""
 
     name = "ensemble"
 
@@ -208,14 +195,7 @@ def build_learner(name: str, params: dict[str, Any] | None = None, seed: int = 4
 
 
 class UpliftCalibrator:
-    """Monotone map from ranking score to expected uplift in probability points.
-
-    Out-of-fold scores are cut into quantile bins; each bin's observed uplift (treated minus
-    control purchase rate) is regressed on the bin's median score with size-weighted isotonic
-    regression. Binning first keeps the fit stable: a single client's outcome says almost
-    nothing about their uplift. Turns a ranking into numbers a profit rule can use: send when
-    calibrated uplift x margin > message cost.
-    """
+    """Isotonic map from score to uplift, fitted on observed uplift in score quantile bins."""
 
     def __init__(self, n_bins: int = 20):
         if n_bins < 2:

@@ -1,10 +1,6 @@
-"""Freeze the current model outputs as a versioned local audit snapshot with a hash manifest.
+"""Copy current outputs into snapshots/<label>/ and write a hash manifest to docs/evidence/.
 
-    uv run python scripts/snapshot_evidence.py <label> [--log FILE ...]
-
-Copies warehouse tables (ml.*, meta.*), model artifacts, exported marts and the static site into
-snapshots/<label>/ (gitignored: binaries and client-level data stay out of git) and writes
-docs/evidence/<label>_manifest.json (committed) with every file's SHA-256 and row counts.
+uv run python scripts/snapshot_evidence.py <label> [--log FILE ...]
 """
 
 from __future__ import annotations

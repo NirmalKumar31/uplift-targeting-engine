@@ -1,4 +1,3 @@
-{# Every age band must contain only ages inside it (e.g. 16-year-olds never labelled 18-24). #}
 {% test age_band_consistent(model) %}
 select client_id, age, age_band from {{ model }}
 where not (

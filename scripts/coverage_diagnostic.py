@@ -1,7 +1,4 @@
-"""Run the bootstrap coverage diagnostic and record it under docs/evidence/.
-
-uv run python scripts/coverage_diagnostic.py
-"""
+"""Run the bootstrap coverage simulation and save it to docs/evidence/."""
 
 import json
 from pathlib import Path

@@ -1,4 +1,3 @@
--- Demographics and card history as of the cutoff. Unknown dates stay NULL (never imputed here).
 select
     client_id,
     age,

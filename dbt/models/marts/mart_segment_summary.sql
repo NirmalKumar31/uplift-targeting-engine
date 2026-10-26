@@ -1,5 +1,3 @@
--- Predicted policy groups by demographic slice. Group labels are model-based business labels,
--- not observed individual response types. Projections count only customers actually texted.
 select
     predicted_group,
     age_band,

@@ -1,9 +1,4 @@
-"""DuckDB warehouse access: raw -> staging/features (dbt) -> ml history -> marts (dbt).
-
-Model outputs are *history* tables: every row carries the `run_id` that produced it, and a rerun
-appends instead of replacing, so earlier evaluations stay queryable. Marts select the runs of one
-release. The warehouse is the build workspace; the release on disk is what consumers read.
-"""
+"""DuckDB helpers. Model outputs are appended per run_id so earlier runs stay queryable."""
 
 from __future__ import annotations
 
@@ -19,7 +14,6 @@ def connect(cfg: Config, read_only: bool = False) -> duckdb.DuckDBPyConnection:
 
 
 def write_table(con: duckdb.DuckDBPyConnection, df: pd.DataFrame, table: str) -> None:
-    """Replace `schema.table` (for derived, non-historical tables only)."""
     schema = table.split(".")[0]
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     con.register("_df", df)
@@ -28,7 +22,7 @@ def write_table(con: duckdb.DuckDBPyConnection, df: pd.DataFrame, table: str) ->
 
 
 def append_run(con: duckdb.DuckDBPyConnection, df: pd.DataFrame, table: str, run_id: str) -> None:
-    """Append rows tagged with run_id; new columns are added, rows of the same run replaced."""
+    """Append rows for one run, adding new columns as needed."""
     schema = table.split(".")[0]
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     df = df.assign(run_id=run_id)

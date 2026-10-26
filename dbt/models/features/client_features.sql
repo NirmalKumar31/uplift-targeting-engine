@@ -1,5 +1,4 @@
--- The feature store: one row per client (all ~400k card holders), every feature group joined.
--- Clients without purchase history keep NULLs for behavioural features (LightGBM handles them).
+-- One row per client; behavioural features stay NULL for clients without purchases.
 select
     d.*,
     r.* exclude (client_id),

@@ -1,4 +1,4 @@
-"""Modeling frames from the feature store, and the locked development/test split."""
+"""Load modelling data from the feature store."""
 
 from __future__ import annotations
 
@@ -11,10 +11,7 @@ CATEGORICAL = ["gender"]
 
 
 def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Model-ready matrix: client_id as index, categoricals with fixed levels, all else float.
-
-    Serving builds the identical frame through `contract.to_model_frame`.
-    """
+    """client_id as index, gender as a fixed-level category, everything else float."""
     X = df.set_index("client_id") if "client_id" in df.columns else df.copy()
     for col in X.columns:
         if col in CATEGORICAL:
@@ -41,7 +38,6 @@ def load_experiment(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 
 def make_split(experiment: pd.DataFrame, test_share: float, seed: int) -> pd.Series:
-    """Stratified on treatment x target so both partitions keep the experiment's balance."""
     strata = experiment.treatment * 2 + experiment.target
     _, test = train_test_split(
         np.arange(len(experiment)), test_size=test_share, stratify=strata, random_state=seed

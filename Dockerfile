@@ -1,7 +1,4 @@
-# One image, two entry points (see docker-compose.yml):
-#   dashboard  serves the committed marts in data/marts (no warehouse or model needed)
-#   api        serves the ACTIVE release mounted at /app/releases (read-only); without it the
-#              API is alive (/health 200) but not ready (/ready 503) - deliberately.
+# Dashboard by default; the API needs ./releases mounted (see docker-compose.yml).
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 curl \
     && rm -rf /var/lib/apt/lists/*

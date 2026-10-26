@@ -1,9 +1,4 @@
-"""The compact results artifact of a release (`results.json`).
-
-Every headline number shown by the dashboard, the static site and the README is read from this
-file, which is generated from the release's warehouse history - never typed into a presentation
-file. Each block states its evaluation source and population.
-"""
+"""Build results.json, the source for every number shown in the dashboard, site and README."""
 
 from __future__ import annotations
 
@@ -31,7 +26,6 @@ def build_results(
     runs: dict[str, str],
     historical_reason: str | None = None,
 ) -> dict:
-    """Results from exactly `runs` ({stage: run_id}); historical is optional."""
     a, d, e = runs["assess"], runs["deploy"], runs["explain"]
     h = runs.get("historical")
 

@@ -1,5 +1,4 @@
--- One row per (client, transaction). Transaction-level fields repeat on every line item;
--- any_value() is safe because source test consistent_within guarantees they agree.
+-- One row per transaction; consistent_within guarantees any_value() is safe.
 select
     client_id,
     transaction_id,

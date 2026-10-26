@@ -10,7 +10,6 @@ sources:
           - name: client_id
             data_tests: [unique, not_null]
           - name: first_issue_date
-            # A card issued after the cutoff cannot have pre-cutoff history: fail the build.
             data_tests:
               - no_future_dates: {arguments: {columns: [first_issue_date]}}
       - name: products
@@ -20,7 +19,6 @@ sources:
       - name: purchases
         description: One row per line item; transaction-level fields repeat on every line.
         data_tests:
-          # Purchases at/after the cutoff would leak post-SMS behaviour into features: fail.
           - no_future_dates: {arguments: {columns: [transaction_datetime]}}
           - consistent_within:
               arguments:

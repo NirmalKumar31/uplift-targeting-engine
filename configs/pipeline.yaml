@@ -1,19 +1,14 @@
-# Single source of truth for every pipeline stage. Paths are relative to the project root
-# (the directory holding this configs/ folder, or $UTE_ROOT).
+# Paths are relative to the project root.
 
 paths:
   raw_dir: data/raw
   warehouse: data/warehouse.duckdb
-  # Versioned releases (model bundle, scores, campaign assignment, marts, results). Gitignored.
   releases_dir: releases
-  # Marts of the *active* release, exported for the dashboard (committed).
-  marts_dir: data/marts
-  # Frozen historical evidence (pre-remediation snapshot). Gitignored; manifest in docs/evidence.
+  marts_dir: data/marts  # committed copy of the active release's marts
   historical_snapshot: snapshots/2026-10-25_pre_remediation
   historical_manifest: docs/evidence/2026-10-25_pre_remediation_manifest.json
 
 dataset:
-  # X5 RetailHero uplift dataset (randomised SMS experiment, ~200k labelled clients).
   base_url: https://huggingface.co/datasets/pytorch-lifestream/retailhero-uplift/resolve/main/data
   files:
     clients.csv.gz: b8985170e03dc65fa532fb6b8ca6dd70ea5c30c35ea7c1019ee6ea2034d04099
@@ -21,30 +16,19 @@ dataset:
     purchases.csv.gz: 1342e14e1aa9d39dc242f1b66c903f0576fd184af9dc5a3bbe932607dc2d8aba
     uplift_train.csv.gz: 23aced68634c605acb93a7ab450aabac1a0ce0c8104e59ffed9941109ddc4ccd
     uplift_test.csv.gz: 8b98fe6ee94478253f40e7ed7ebbbefeb47c78ab37fd41111f3b35b8b69373e0
-  # Feature cutoff: every feature uses only information strictly before this timestamp (store
-  # local time, timezone not given in the data). The competition documentation states that the
-  # purchase history precedes the SMS; the exact SMS timestamp is NOT published. This value is the
-  # day after the last purchase in purchases.csv (2019-03-18 23:40:03): a feature cutoff, not a
-  # claim about when the SMS was sent. Passed to dbt as the `as_of` var.
+  # Feature cutoff: day after the last purchase. The exact SMS send time is not published.
   as_of: "2019-03-19 00:00:00"
 
 experiment:
   seed: 42
-  # Inner cross-fitting folds (model selection, calibration out-of-fold scores).
   n_folds: 5
-  # Outer folds for the retrospective assessment of the complete policy procedure.
   outer_folds: 5
-  # Customer-within-arm bootstrap replicates for every reported interval.
   n_bootstrap: 500
-  # Random rankings used for the Qini noise band.
   noise_rankings: 200
 
 models:
-  # Candidate learners. `random` and `response` are reference baselines; the champion is the
-  # uplift learner (or ensemble) with the highest inner out-of-fold Qini.
   candidates: [random, response, s_learner, t_learner, x_learner, class_transformation, dr_learner]
-  # Mean-of-estimates ensemble of the k best uplift learners (0 disables; otherwise >= 2).
-  ensemble_top_k: 3
+  ensemble_top_k: 3  # 0 disables the ensemble
   lightgbm:
     n_estimators: 300
     learning_rate: 0.03
@@ -57,26 +41,19 @@ models:
     verbose: -1
 
 calibration:
-  # Quantile bins of out-of-fold scores for the isotonic score -> effect calibration.
   n_bins: 20
 
 economics:
-  # X5 is public, so these are documented ASSUMPTIONS; replace with real figures.
+  # Assumptions for a public dataset; replace with real figures.
   currency: RUB
   sms_cost: 3.0
-  # X5 Retail Group reported 2019 gross margin (24.6%).
-  gross_margin: 0.246
-  # Assumed value of one additional buyer. null = mean basket in purchases x gross_margin.
-  margin_per_purchase: null
+  gross_margin: 0.246  # X5's reported 2019 gross margin
+  margin_per_purchase: null  # null = mean basket x gross_margin
 
 campaign:
-  # A frozen campaign: holdout assignment is a deterministic hash of (campaign_id, client_id).
   campaign_id: x5-sms-demo-2019-03
-  # Share of eligible customers held back as a randomised control group.
   holdout_share: 0.10
 
 monitoring:
-  # PSI here compares experiment vs non-experiment customers in the same historical snapshot:
-  # a diagnostic, not temporal monitoring and not a deployment gate.
   psi_warn: 0.10
   psi_fail: 0.25

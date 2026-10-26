@@ -1,5 +1,3 @@
-"""R4: stale or partly rebuilt features are refused. R5: no historical snapshot is required."""
-
 from __future__ import annotations
 
 import json
@@ -94,7 +92,6 @@ def test_transform_failing_partway_invalidates_the_workspace(tmp_path, monkeypat
 
 
 def test_release_without_historical_snapshot(tmp_path, monkeypatch):
-    """A fresh clone has no local evidence snapshot: the release must still be complete."""
     files = make_raw(tmp_path / "raw")
     config = write_fixture_config(tmp_path, files)  # snapshot paths point at nothing
     monkeypatch.setenv("UTE_ROOT", str(REPO))

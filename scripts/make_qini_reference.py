@@ -1,12 +1,6 @@
-"""Generate Qini / uplift@k reference values with scikit-uplift itself.
+"""Generate Qini reference values with scikit-uplift (run in a separate env with sklift 0.5.1):
 
-scikit-uplift pins an old scikit-learn, so it is not a project dependency. Run this in a separate
-environment, e.g.:
-
-    uv venv /tmp/sk && VIRTUAL_ENV=/tmp/sk uv pip install scikit-uplift==0.5.1 "scikit-learn<1.8"
-    /tmp/sk/bin/python scripts/make_qini_reference.py > tests/fixtures/qini_reference.json
-
-The output (inputs + sklift results + provenance) is committed; tests compare against it.
+python scripts/make_qini_reference.py > tests/fixtures/qini_reference.json
 """
 
 import json

@@ -68,6 +68,15 @@ def render(res: dict) -> str:
                 f"{ci(d['difference_low'], d['difference_high'])} | "
                 f"{d['frac_positive']:.3f} |"
             )
+    dep, blk = pol["deployed"], pol["blanket"]
+    if blk["value_per_1000"] > 0:
+        lines += [
+            "",
+            f"In short: texting {dep['selected_share']:.0%} of customers "
+            f"({1 - dep['selected_share']:.0%} fewer sends than texting everyone) earned "
+            f"{dep['value_per_1000'] / blk['value_per_1000']:.1f}× the text-everyone value. "
+            "The ratio is a point estimate; the interval above is for the difference.",
+        ]
     lo, hi = A["fold_value_range_deployed"]
     max_ks = max(t["ks_statistic_oof_vs_refit"] for t in A["transfer"])
     max_gap = 100 * max(

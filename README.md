@@ -59,6 +59,8 @@ _Generated from `data/marts/results.json` (release `rel-20261026T001416546751`, 
 | Deployed − text nobody | ₽1,184 [₽887, ₽1,477] | 1.000 |
 | Deployed − response model, own best share | ₽690 [₽349, ₽1,000] | 1.000 |
 
+In short: texting 42% of customers (58% fewer sends than texting everyone) earned 2.4× the text-everyone value. The ratio is a point estimate; the interval above is for the difference.
+
 Intervals: 500 customer-within-arm bootstrap draws for the fixed fitted policies; they exclude model-fitting and selection uncertainty. Deployed value by outer fold ranged ₽818 to ₽1,505 per 1,000 (folds share training data). Champion by fold: s_learner, ensemble:class_transformation+s_learner+x_learner, s_learner, s_learner, ensemble:dr_learner+s_learner+x_learner.
 
 Calibration on validation folds: weighted mean |predicted − observed| uplift 0.56 pp across 10 bins. OOF-to-refit transfer: KS ≤ 0.028; eligible share (inner OOF vs validation) within 1.2 pp in every fold.

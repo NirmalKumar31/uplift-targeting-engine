@@ -1,7 +1,7 @@
 [project]
 name = "uplift-targeting-engine"
 version = "2.0.0"
-description = "Causal uplift modeling for promotion targeting: DuckDB + dbt feature warehouse, cross-fitted meta-learners, outer-fold policy validation, a scoring API and a BI dashboard."
+description = "Analyze an SMS experiment, estimate who benefits from outreach, and compare contact strategies."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }

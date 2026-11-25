@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" role="img" aria-labelledby="title desc">
+<title id="title">Estimated value of targeted SMS and texting everyone</title>
+<desc id="desc">Internal validation under assumed costs. Error bars show 95 percent intervals.</desc>
+<rect width="960" height="320" rx="16" fill="#f8fafc"/>
+<g font-family="system-ui, sans-serif">
+<text x="34" y="44" font-size="24" fill="#172033">Targeted SMS compared with texting everyone</text>
+<text x="34" y="73" font-size="15" fill="#526075">Estimated net value per 1,000 customers (RUB)</text>
+<text x="34" y="125" font-size="18" fill="#172033">Targeted SMS</text>
+<text x="34" y="148" font-size="14" fill="#526075">42% of customers selected</text>
+<rect x="250.0" y="106" width="456.8" height="30" rx="4" fill="#2563eb"/>
+<path d="M592.3,121 H820.0" stroke="#172033" stroke-width="2"/>
+<text x="850" y="126" font-size="20" fill="#172033">₽1,184</text>
+<text x="250" y="163" font-size="13" fill="#526075">95% interval: [₽887, ₽1,477]</text>
+<text x="34" y="207" font-size="18" fill="#172033">Text everyone</text>
+<text x="34" y="230" font-size="14" fill="#526075">100% of customers selected</text>
+<rect x="250.0" y="188" width="192.9" height="30" rx="4" fill="#94a3b8"/>
+<path d="M277.8,203 H610.2" stroke="#172033" stroke-width="2"/>
+<text x="850" y="208" font-size="20" fill="#172033">₽500</text>
+<text x="250" y="245" font-size="13" fill="#526075">95% interval: [₽72, ₽933]</text>
+<text x="34" y="291" font-size="13" fill="#526075">Assumed costs and buyer value. Internal validation; not a new campaign result.</text>
+</g></svg>

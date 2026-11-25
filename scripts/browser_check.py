@@ -83,6 +83,7 @@ def check_site(browser, site: Path, required: list[str]) -> dict:
         )
         page.on("pageerror", lambda e, errors=errors: errors.append(str(e)))
         page.goto(site.resolve().as_uri())
+        page.locator("details").evaluate_all("(items) => items.forEach(d => d.open = true)")
         page.wait_for_selector(".js-plotly-plot", timeout=60000)
         page.wait_for_timeout(1500)
         plots = page.evaluate(PLOT_JS)

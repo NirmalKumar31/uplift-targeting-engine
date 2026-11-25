@@ -52,18 +52,18 @@ AGE_BANDS = ["14-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+", "Unkno
 
 SOURCES = {
     "assessment": (
-        "Outer-fold retrospective validation",
+        "Internal validation",
         "Whole policy procedure fitted without each customer's fold, all 200k labelled "
         "customers. Internal validation on data used during earlier exploration: not "
         "independent confirmation.",
     ),
     "historical": (
-        "Historical reused test",
+        "Earlier analysis (reused test data)",
         "The 2026-10-24 bundle on its 40,008-customer test split, which was scored "
         "repeatedly and reused by the audit.",
     ),
     "projection": (
-        "Model-based projection",
+        "Campaign estimate",
         "Sums of calibrated model effects under the assumed economics for the whole "
         "base. A scenario, not an observed campaign result.",
     ),
@@ -150,11 +150,11 @@ def model_label(name: str) -> str:
         "random_draw": "Random (one draw)",
         "champion": "Historical champion (S-learner)",
         "champion_pooled": "Champion",
-        "deployed": "Deployed policy",
-        "response_optimized": "Response model (own best share)",
+        "deployed": "Targeted SMS",
+        "response_optimized": "Target likely buyers",
         "blanket": "Text everyone",
         "no_send": "Text nobody",
-        "random_expected": "Random, same share (expected)",
+        "random_expected": "Contact a random group",
     }
     if name.startswith("ensemble:"):
         return "Ensemble (" + " + ".join(short.get(p, p) for p in name[9:].split("+")) + ")"

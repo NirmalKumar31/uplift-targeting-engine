@@ -18,12 +18,12 @@ import plotly.graph_objects as go
 ROOT = Path(__file__).resolve().parents[1]
 # Chart ids checked by scripts/browser_check.py.
 CHART_IDS = {
-    "Policy value, outer-fold validation": "policy-value",
-    "Calibration on held-out folds": "calibration",
-    "Qini curve, historical reused test": "hist-qini",
-    "Observed effect by out-of-fold score decile": "decile-effect",
-    "Predicted group mix by age band": "group-mix",
-    "Drivers of the raw uplift score": "drivers",
+    "Estimated value of each contact strategy": "policy-value",
+    "Do the estimates match observed responses?": "calibration",
+    "Earlier ranking comparison": "hist-qini",
+    "Response by model score group": "decile-effect",
+    "Estimated response groups by age": "group-mix",
+    "Inputs used by the model": "drivers",
 }
 
 
@@ -84,14 +84,14 @@ def main() -> None:
     )
     fig.add_vline(x=0, line=dict(color=MUTED, width=1))
     fig.update_layout(
-        xaxis_title="Value vs texting nobody, per 1,000",
+        xaxis_title="Estimated net value per 1,000 customers (RUB)",
         yaxis=dict(autorange="reversed"),
         bargap=0.35,
     )
     figures.append(
         (
             "assessment",
-            "Policy value, outer-fold validation",
+            "Estimated value of each contact strategy",
             style(fig, 360, legend=False),
             "95% intervals: customer resampling within arm for fixed fitted policies.",
         )
@@ -115,12 +115,14 @@ def main() -> None:
         marker=dict(size=8),
     )
     fig.update_layout(
-        xaxis=dict(title="Calibrated-effect bin", dtick=1), yaxis_title="Uplift (pp)", bargap=0.25
+        xaxis=dict(title="Prediction group", dtick=1),
+        yaxis_title="Additional purchase probability (percentage points)",
+        bargap=0.25,
     )
     figures.append(
         (
             "assessment",
-            "Calibration on held-out folds",
+            "Do the estimates match observed responses?",
             style(fig, 360),
             "Each prediction comes from a policy fitted without the customer's fold.",
         )
@@ -153,7 +155,7 @@ def main() -> None:
         figures.append(
             (
                 "historical",
-                "Qini curve, historical reused test",
+                "Earlier ranking comparison",
                 style(fig, 360),
                 "Old bundle on its reused 40,008-customer test split.",
             )
@@ -170,12 +172,12 @@ def main() -> None:
         )
     )
     fig.update_layout(
-        xaxis_title="Out-of-fold score decile (1 = highest)", yaxis_title="Observed uplift (pp)"
+        xaxis_title="Score group (1 = highest)", yaxis_title="Observed change (percentage points)"
     )
     figures.append(
         (
             "experiment",
-            "Observed effect by out-of-fold score decile",
+            "Response by model score group",
             style(fig, 340, legend=False),
             "Raw experiment differences, no model.",
         )
@@ -201,7 +203,7 @@ def main() -> None:
     figures.append(
         (
             "projection",
-            "Predicted group mix by age band",
+            "Estimated response groups by age",
             style(fig, 380),
             "Predicted business labels, not observed individual response types.",
         )
@@ -214,7 +216,7 @@ def main() -> None:
     figures.append(
         (
             "projection",
-            "Drivers of the raw uplift score",
+            "Inputs used by the model",
             style(fig, 420, legend=False),
             f"Surrogate TreeSHAP; held-out fidelity R² "
             f"{fid.loc['held-out rows', 'r2']:.2f}. Explains the model, not causes.",
@@ -236,11 +238,11 @@ def main() -> None:
 
     sections = {
         "assessment": (
-            "1 · Outer-fold retrospective validation of the deployed policy",
+            "Campaign results",
             A["status"] + ". " + A["population"] + ".",
             [
                 tile(
-                    "Deployed policy value / 1,000",
+                    "Targeted SMS: estimated value / 1,000",
                     money(dep.value_per_1000),
                     f"[{money(dep.value_low)}, {money(dep.value_high)}]",
                 ),
@@ -256,7 +258,7 @@ def main() -> None:
             ],
         ),
         "historical": (
-            "2 · Historical reused test (2026-10-24 bundle)",
+            "Earlier analysis",
             f"Unavailable for this release: {H.get('reason')}. No historical numbers are shown."
             if not hist_ok
             else H["source"] + ".",
@@ -264,7 +266,7 @@ def main() -> None:
             if not hist_ok
             else [
                 tile(
-                    "Champion Qini",
+                    "Earlier model ranking score",
                     f"{hm.loc['champion', 'qini_auc']:+.4f}",
                     f"[{hm.loc['champion', 'qini_auc_low']:+.4f}, "
                     f"{hm.loc['champion', 'qini_auc_high']:+.4f}]",
@@ -279,9 +281,13 @@ def main() -> None:
                 for r in hd.query("policy == 'champion_at_41pct'").itertuples()
             ],
         ),
-        "experiment": ("Observed experiment", "Raw treated − control differences.", []),
+        "experiment": (
+            "Responses in the original experiment",
+            "Observed differences between the SMS and no-SMS groups.",
+            [],
+        ),
         "projection": (
-            "3 · Deployment projection (model-based scenario)",
+            "Campaign estimate",
             P["status"] + ".",
             [
                 tile("Customers scored", f"{P['n_scored']:,}"),
@@ -314,20 +320,41 @@ def main() -> None:
                 config={"displayModeBar": False, "responsive": True},
             )
             first = False
-            cards.append(
+            card = (
                 f"<section class='card'><h3>{html.escape(h)}</h3>{body}"
                 f"<p class='note'>{html.escape(note)}</p></section>"
             )
-        blocks.append(
+            if key == "assessment" and CHART_IDS[h] == "calibration":
+                card = (
+                    "<details><summary>How the estimates were checked</summary>"
+                    + card
+                    + "</details>"
+                )
+            cards.append(card)
+        if key == "assessment":
+            tiles = [*tiles[:2], tile("Fewer messages", f"{1 - dep.selected_share:.0%}")]
+            grid = "summary-grid"
+        else:
+            grid = "grid"
+        block = (
             f"<h2>{html.escape(title)}</h2><p class='lede'>{html.escape(lede)}</p>"
             + (f"<div class='tiles'>{''.join(tiles)}</div>" if tiles else "")
-            + f"<div class='grid'>{''.join(cards)}</div>"
+            + f"<div class='{grid}'>{''.join(cards)}</div>"
         )
+        if key != "assessment":
+            block = f"<details><summary>{html.escape(title)}</summary>{block}</details>"
+        blocks.append(block)
 
+    comparison = (
+        f"{1 - dep.selected_share:.0%} fewer messages, about "
+        f"{dep.value_per_1000 / pol.loc['blanket', 'value_per_1000']:.1f} times the estimated value"
+        if pol.loc["blanket", "value_per_1000"] > 0
+        else f"{dep.selected_share:.0%} of customers selected by the targeting approach"
+    )
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Uplift Targeting Engine</title>
+<title>SMS Campaign Targeting</title>
 <style>
   :root {{ --bg:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
           --line:rgba(11,11,11,.10); }}
@@ -349,24 +376,36 @@ def main() -> None:
   .card {{ background:var(--surface); border:1px solid var(--line); border-radius:12px;
           padding:16px; min-width:0; overflow:hidden; }}
   .note {{ color:var(--ink2); font-size:13px; margin:6px 0 0; }}
+  details {{ margin:18px 0; border:1px solid var(--line); border-radius:12px; padding:14px; }}
+  summary {{ cursor:pointer; font-weight:600; font-size:16px; }}
+  details[open] > summary {{ margin-bottom:18px; }}
+  .summary-grid > .card {{ margin-bottom:16px; }}
   footer {{ color:var(--muted); font-size:13px; margin-top:32px; }} a {{ color:#2a78d6; }}
 </style></head><body><main>
 <h1>Who should get the promo SMS?</h1>
-<p class="lede">Causal uplift modelling on the X5 RetailHero randomised SMS experiment. The deployed
-rule texts a customer when the calibrated effect × an assumed {money(econ["margin_per_additional_buyer"])}
-per additional buyer exceeds the {cur}{econ["sms_cost"]:.2f} SMS cost. Release
-<code>{html.escape(res["release_id"])}</code>, policy <code>{html.escape(res["policy_version"])}</code>.</p>
-<p class="lede status"><b>Evidence status.</b> Three kinds of numbers below are not interchangeable:
-internal outer-fold validation of the whole policy (on customers used in earlier exploration),
-a historical test split that has been reused, and model-based projections. None is independent
-confirmation. Economics are assumptions; intervals cover customer sampling for fixed fitted models.</p>
+<p class="lede">Use the RetailHero SMS experiment to identify customer groups more likely to buy
+because of a message. Compare targeted outreach with texting everyone.</p>
+<p class="lede"><b>{html.escape(comparison)}</b> in the current internal
+evaluation. The values below are generated from the result files.</p>
+<p class="lede status"><b>How to read the result.</b> Costs and buyer value are assumptions:
+{cur}{econ["sms_cost"]:.2f} per SMS and {money(econ["margin_per_additional_buyer"])} per additional buyer.
+This analysis reuses customers explored earlier; a fresh randomized campaign is needed to confirm it.
+Intervals exclude model-fitting and selection uncertainty. This project sends no messages.</p>
 {"".join(blocks)}
 <footer>Static snapshot generated by <code>scripts/build_site.py</code> from the active release's
 <code>results.json</code> and marts. Interactive version: the Streamlit app in the repository.
 Source: <a href="https://github.com/NirmalKumar31/uplift-targeting-engine">github.com/NirmalKumar31/uplift-targeting-engine</a></footer>
 </main>
-<script>window.addEventListener('load', () =>
-  document.querySelectorAll('.js-plotly-plot').forEach((g) => Plotly.Plots.resize(g)));</script>
+<script>
+function resizeVisibleCharts() {{
+  document.querySelectorAll('.js-plotly-plot').forEach((g) => {{
+    if (g.getBoundingClientRect().width) Plotly.Plots.resize(g);
+  }});
+}}
+window.addEventListener('load', resizeVisibleCharts);
+document.querySelectorAll('details').forEach((d) =>
+  d.addEventListener('toggle', resizeVisibleCharts));
+</script>
 </body></html>"""
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(page)

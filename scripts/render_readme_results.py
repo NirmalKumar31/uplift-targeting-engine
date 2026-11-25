@@ -29,7 +29,7 @@ def ci(lo: float, hi: float) -> str:
     return f"[{rub(lo)}, {rub(hi)}]"
 
 
-def render(res: dict) -> str:
+def render_details(res: dict) -> str:
     A, H, P, E = (
         res["assessment"],
         res["historical_test"],
@@ -73,8 +73,9 @@ def render(res: dict) -> str:
         lines += [
             "",
             f"In short: texting {dep['selected_share']:.0%} of customers "
-            f"({1 - dep['selected_share']:.0%} fewer sends than texting everyone) earned "
-            f"{dep['value_per_1000'] / blk['value_per_1000']:.1f}× the text-everyone value. "
+            f"({1 - dep['selected_share']:.0%} fewer sends than texting everyone) had "
+            f"{dep['value_per_1000'] / blk['value_per_1000']:.1f}× "
+            "the estimated text-everyone value. "
             "The ratio is a point estimate; the interval above is for the difference.",
         ]
     lo, hi = A["fold_value_range_deployed"]
@@ -129,6 +130,108 @@ def render(res: dict) -> str:
     return "\n".join(lines)
 
 
+def render(res: dict) -> str:
+    policies = {p["policy"]: p for p in res["assessment"]["policies"]}
+    dep, blanket = policies["deployed"], policies["blanket"]
+    economics = res["economics"]
+    ratio = (
+        dep["value_per_1000"] / blanket["value_per_1000"] if blanket["value_per_1000"] > 0 else None
+    )
+    lines = [
+        "| Contact strategy | Customers selected | Estimated net value per 1,000 |",
+        "|---|---:|---:|",
+        f"| Targeted SMS | {dep['selected_share']:.0%} | {rub(dep['value_per_1000'])} |",
+        f"| Text everyone | {blanket['selected_share']:.0%} | {rub(blanket['value_per_1000'])} |",
+        "",
+    ]
+    summary = f"The targeted approach used **{1 - dep['selected_share']:.0%} fewer messages**"
+    if ratio is not None:
+        summary += f" and had **{ratio:.1f} times the estimated value** of texting everyone."
+    else:
+        summary += "."
+    lines += [
+        summary,
+        "",
+        f"Internal validation on {res['assessment']['n_customers']:,} customers. "
+        if "n_customers" in res["assessment"]
+        else "Internal validation on about 200,000 experiment customers. ",
+    ]
+    lines[-1] += (
+        f"Assumptions: {rub(economics['sms_cost'])} per SMS and "
+        f"{rub(economics['margin_per_additional_buyer'])} per additional buyer. "
+        "These are estimated incremental values, not revenue from a new campaign. "
+        "[See uncertainty intervals and validation details](docs/results.md)."
+    )
+    return "\n".join(lines)
+
+
+def summary_svg(res: dict) -> str:
+    from html import escape
+
+    policies = {p["policy"]: p for p in res["assessment"]["policies"]}
+    rows = [
+        (label, policies[key])
+        for label, key in [("Targeted SMS", "deployed"), ("Text everyone", "blanket")]
+    ]
+    low = min(0, *(p["value_low"] for _, p in rows))
+    high = max(1, *(p["value_high"] for _, p in rows))
+
+    def x(value):
+        return 250 + 570 * (value - low) / (high - low)
+
+    def label(xpos, ypos, value, size=16, muted=False):
+        color = "#526075" if muted else "#172033"
+        return (
+            f'<text x="{xpos}" y="{ypos}" font-size="{size}" fill="{color}">'
+            f"{escape(str(value))}</text>"
+        )
+
+    zero = x(0)
+    parts = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" '
+        'role="img" aria-labelledby="title desc">',
+        '<title id="title">Estimated value of targeted SMS and texting everyone</title>',
+        '<desc id="desc">Internal validation under assumed costs. '
+        "Error bars show 95 percent intervals.</desc>",
+        '<rect width="960" height="320" rx="16" fill="#f8fafc"/>',
+        '<g font-family="system-ui, sans-serif">',
+        label(34, 44, "Targeted SMS compared with texting everyone", 24),
+        label(34, 73, "Estimated net value per 1,000 customers (RUB)", 15, True),
+    ]
+    for i, (name, policy) in enumerate(rows):
+        y = 125 + i * 82
+        value = policy["value_per_1000"]
+        left, right = sorted([zero, x(value)])
+        color = "#2563eb" if i == 0 else "#94a3b8"
+        parts += [
+            label(34, y, name, 18),
+            label(34, y + 23, f"{policy['selected_share']:.0%} of customers selected", 14, True),
+            f'<rect x="{left:.1f}" y="{y - 19}" width="{max(1, right - left):.1f}" '
+            f'height="30" rx="4" fill="{color}"/>',
+            f'<path d="M{x(policy["value_low"]):.1f},{y - 4} H{x(policy["value_high"]):.1f}" '
+            'stroke="#172033" stroke-width="2"/>',
+            label(850, y + 1, rub(value), 20),
+            label(
+                250,
+                y + 38,
+                "95% interval: " + ci(policy["value_low"], policy["value_high"]),
+                13,
+                True,
+            ),
+        ]
+    parts += [
+        label(
+            34,
+            291,
+            "Assumed costs and buyer value. Internal validation; not a new campaign result.",
+            13,
+            True,
+        ),
+        "</g></svg>",
+    ]
+    return "\n".join(parts)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--marts", type=Path, default=ROOT / "data" / "marts")
@@ -141,7 +244,12 @@ def main() -> None:
     head, rest = text.split(START, 1)
     _, tail = rest.split(END, 1)
     args.readme.write_text(f"{head}{START}\n{render(res)}\n{END}{tail}")
-    print(f"README results block regenerated from release {res['release_id']}")
+    details = ROOT / "docs" / "results.md"
+    details.write_text("# Detailed SMS targeting results\n\n" + render_details(res) + "\n")
+    chart = ROOT / "docs" / "assets" / "campaign_summary.svg"
+    chart.parent.mkdir(parents=True, exist_ok=True)
+    chart.write_text(summary_svg(res) + "\n")
+    print(f"README, chart, and detailed results generated from release {res['release_id']}")
 
 
 if __name__ == "__main__":
